@@ -1,0 +1,4 @@
+project_id = "ysttmofxsgyqytkxlrbj"
+
+[functions.notes-api]
+verify_jwt = false
