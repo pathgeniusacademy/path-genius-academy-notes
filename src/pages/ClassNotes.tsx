@@ -51,11 +51,47 @@ export default function ClassNotes() {
   async function download(note: NoteItem) {
     setDownloading(note.id);
     try {
-      const { downloadUrl } = await createDownloadTicket(note.id);
-      // A one-time server-side URL streams the personalized PDF. This is friendlier to Android WebView than blob URLs.
-      window.location.href = downloadUrl;
+      const { downloadUrl, fileName } = await createDownloadTicket(note.id);
+
+      // The Android app should keep using the real HTTPS download URL so its
+      // WebView DownloadListener can save the PDF normally.
+      const isPathGeniusApp = /PathGeniusAcademyApp/i.test(navigator.userAgent);
+      if (isPathGeniusApp) {
+        window.location.href = downloadUrl;
+        toast.success("Download started. Check your Downloads folder.");
+        window.setTimeout(() => setDownloading(null), 2000);
+        return;
+      }
+
+      // Browsers: fetch the one-time PDF directly. This lets us detect server
+      // errors instead of leaving the button stuck on "Preparing…".
+      const response = await fetch(downloadUrl, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error || `Download failed (${response.status}).`);
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("The generated PDF was empty.");
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = fileName || `${note.note_title || "class-notes"}.pdf`;
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      toast.success("Watermarked PDF downloaded.");
     } catch (e) {
       toast.error((e as Error).message);
+    } finally {
       setDownloading(null);
     }
   }
