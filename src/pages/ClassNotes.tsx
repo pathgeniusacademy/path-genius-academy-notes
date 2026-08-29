@@ -51,48 +51,21 @@ export default function ClassNotes() {
   async function download(note: NoteItem) {
     setDownloading(note.id);
     try {
-      const { downloadUrl, fileName } = await createDownloadTicket(note.id);
+      const { downloadUrl } = await createDownloadTicket(note.id);
 
-      // The Android app should keep using the real HTTPS download URL so its
-      // WebView DownloadListener can save the PDF normally.
-      const isPathGeniusApp = /PathGeniusAcademyApp/i.test(navigator.userAgent);
-      if (isPathGeniusApp) {
-        window.location.href = downloadUrl;
-        toast.success("Download started. Check your Downloads folder.");
-        window.setTimeout(() => setDownloading(null), 2000);
-        return;
-      }
-
-      // Browsers: fetch the one-time PDF directly. This lets us detect server
-      // errors instead of leaving the button stuck on "Preparing…".
-      const response = await fetch(downloadUrl, {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.error || `Download failed (${response.status}).`);
-      }
-
-      const blob = await response.blob();
-      if (!blob.size) throw new Error("The generated PDF was empty.");
-
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = fileName || `${note.note_title || "class-notes"}.pdf`;
-      anchor.style.display = "none";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-      toast.success("Watermarked PDF downloaded.");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
+      // Do NOT fetch the PDF with JavaScript here.
+      // The PDF endpoint is on a different origin and browsers can reject the
+      // cross-origin fetch even when the server successfully returns HTTP 200.
+      // A normal HTTPS navigation/download does not require CORS permission.
       setDownloading(null);
+      toast.success("Preparing complete. Download starting…");
+
+      // Works in normal browsers and is also friendly to Android WebView,
+      // where the app's DownloadListener can handle the PDF response.
+      window.location.assign(downloadUrl);
+    } catch (e) {
+      setDownloading(null);
+      toast.error((e as Error).message);
     }
   }
 
