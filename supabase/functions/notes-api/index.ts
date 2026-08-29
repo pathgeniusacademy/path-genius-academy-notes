@@ -136,16 +136,21 @@ async function handleDownload(req: Request, ticketId: string) {
   if (!/^[0-9a-f-]{36}$/i.test(ticketId)) return json({ error: "Invalid download ticket." }, 400);
   const now = new Date().toISOString();
 
+  // Do not consume the ticket before the browser finishes the download.
+  // Chromium download managers can retry or make range/HEAD requests. If the
+  // ticket becomes invalid after the first request, the browser can leave a
+  // perfectly valid PDF stuck as ".crdownload".
+  //
+  // The ticket remains usable only until its short expiry (2 minutes), and the
+  // PDF itself is personalized with the student's identity.
   const { data: ticket, error: ticketError } = await notesAdmin
     .from("note_download_tickets")
-    .update({ used_at: now })
+    .select("id,student_id,note_id,student_name,student_mobile,login_id,used_at,expires_at")
     .eq("id", ticketId)
-    .is("used_at", null)
     .gt("expires_at", now)
-    .select("id,student_id,note_id,student_name,student_mobile,login_id")
     .maybeSingle();
 
-  if (ticketError || !ticket) return json({ error: "This download link is expired or has already been used." }, 410);
+  if (ticketError || !ticket) return json({ error: "This download link is expired." }, 410);
 
   const { data: note, error: noteError } = await notesAdmin
     .from("notes")
@@ -172,22 +177,72 @@ async function handleDownload(req: Request, ticketId: string) {
     });
 
     const filename = cleanFileName(`${note.class_title}-${note.note_title}.pdf`);
-    const pdfBody = new Blob([watermarked], { type: "application/pdf" });
+    const totalLength = watermarked.byteLength;
 
-    return new Response(pdfBody, {
+    // Mark the ticket as used for audit purposes, but do NOT invalidate it
+    // during its short expiry window. This allows browser retry/range requests.
+    if (!ticket.used_at) {
+      await notesAdmin
+        .from("note_download_tickets")
+        .update({ used_at: now })
+        .eq("id", ticket.id)
+        .is("used_at", null);
+    }
+
+    const baseHeaders: Record<string, string> = {
+      ...corsHeaders,
+      // application/octet-stream is intentionally used for the download
+      // response. It is more reliable for binary Edge Function downloads and
+      // still saves with the .pdf filename from Content-Disposition.
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0",
+      "X-Content-Type-Options": "nosniff",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+      "Accept-Ranges": "bytes",
+      "Access-Control-Expose-Headers":
+        "Content-Disposition, Content-Length, Content-Range, Accept-Ranges",
+    };
+
+    const range = req.headers.get("range");
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/i.exec(range.trim());
+      if (match) {
+        let start = match[1] ? Number(match[1]) : 0;
+        let end = match[2] ? Number(match[2]) : totalLength - 1;
+
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (!Number.isFinite(end) || end >= totalLength) end = totalLength - 1;
+
+        if (start <= end && start < totalLength) {
+          const chunk = watermarked.slice(start, end + 1);
+          return new Response(req.method === "HEAD" ? null : chunk, {
+            status: 206,
+            headers: {
+              ...baseHeaders,
+              "Content-Range": `bytes ${start}-${end}/${totalLength}`,
+              "Content-Length": String(chunk.byteLength),
+            },
+          });
+        }
+      }
+
+      return new Response(null, {
+        status: 416,
+        headers: {
+          ...baseHeaders,
+          "Content-Range": `bytes */${totalLength}`,
+        },
+      });
+    }
+
+    return new Response(req.method === "HEAD" ? null : watermarked, {
       status: 200,
       headers: {
-        ...corsHeaders,
-        "Content-Type": "application/pdf",
-        "Content-Length": String(watermarked.byteLength),
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Transfer-Encoding": "binary",
-        "Cache-Control": "private, no-store, max-age=0, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-        "X-Content-Type-Options": "nosniff",
-        "Cross-Origin-Resource-Policy": "cross-origin",
-        "Access-Control-Expose-Headers": "Content-Disposition, Content-Length",
+        ...baseHeaders,
+        "Content-Length": String(totalLength),
       },
     });
   } catch (error) {
@@ -341,7 +396,9 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     const ticket = url.searchParams.get("ticket");
-    if (req.method === "GET" && ticket) return await handleDownload(req, ticket);
+    if ((req.method === "GET" || req.method === "HEAD") && ticket) {
+      return await handleDownload(req, ticket);
+    }
     if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
     return await handleAction(req);
   } catch (error) {

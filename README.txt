@@ -1,12 +1,20 @@
-Path Genius Notes - Netlify build fix
+Path Genius Notes - Browser Download Gesture Fix V3
 
-Replace these 2 files in the ROOT of the GitHub repo:
-1. tsconfig.node.json
-2. vite.config.ts
+Problem:
+The Edge Function returns HTTP 200, but the browser may block a file download
+started only after an awaited ticket request because the original click/user
+gesture has expired.
 
-Why:
-- Removes the invalid allowImportingTsExtensions setting that conflicts with `tsc -b`.
-- Removes Node-only `path` / `__dirname` usage from the ESM Vite config.
+Fix:
+- Opens the download tab immediately inside the student's click.
+- Creates the secure one-time ticket asynchronously.
+- Navigates the already-authorized tab to the PDF endpoint.
+- Keeps Android WebView on the direct HTTPS download path.
+- Falls back to same-tab navigation if popups are blocked.
+- Resets the Preparing state correctly.
+
+Replace:
+src/pages/ClassNotes.tsx
 
 Commit:
-Fix Notes Netlify build
+Fix browser personalized PDF download gesture
