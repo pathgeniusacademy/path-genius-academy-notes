@@ -49,22 +49,55 @@ export default function ClassNotes() {
   }, [settings, classInfo, classId, profile]);
 
   async function download(note: NoteItem) {
+    const isPathGeniusApp = /PathGeniusAcademyApp/i.test(navigator.userAgent);
+
+    // Desktop/mobile browsers can block a file download if it starts only
+    // after an awaited network request because the original user gesture has
+    // already expired. Open the download tab immediately while the click is
+    // still a trusted user action, then navigate it after the secure ticket
+    // is created.
+    let downloadWindow: Window | null = null;
+    if (!isPathGeniusApp) {
+      downloadWindow = window.open("", "_blank");
+      if (downloadWindow) {
+        try {
+          downloadWindow.document.title = "Preparing Path Genius Notes";
+          downloadWindow.document.body.innerHTML =
+            '<div style="font-family:system-ui;padding:32px;color:#0f274f">' +
+            '<h2 style="margin:0 0 10px">Path Genius Academy</h2>' +
+            '<p>Preparing your personalized PDF…</p></div>';
+        } catch {
+          // Ignore cosmetic failure; the window can still be navigated.
+        }
+      }
+    }
+
     setDownloading(note.id);
+
     try {
       const { downloadUrl } = await createDownloadTicket(note.id);
 
-      // Do NOT fetch the PDF with JavaScript here.
-      // The PDF endpoint is on a different origin and browsers can reject the
-      // cross-origin fetch even when the server successfully returns HTTP 200.
-      // A normal HTTPS navigation/download does not require CORS permission.
       setDownloading(null);
-      toast.success("Preparing complete. Download starting…");
+      toast.success("Personalized PDF ready. Download starting…");
 
-      // Works in normal browsers and is also friendly to Android WebView,
-      // where the app's DownloadListener can handle the PDF response.
-      window.location.assign(downloadUrl);
+      if (isPathGeniusApp) {
+        // Android WebView: keep the direct HTTPS navigation so the native
+        // DownloadListener can save the attachment.
+        window.location.href = downloadUrl;
+        return;
+      }
+
+      if (downloadWindow && !downloadWindow.closed) {
+        downloadWindow.location.href = downloadUrl;
+        return;
+      }
+
+      // Popup blocked: fall back to a same-tab top-level navigation.
+      // The URL returns Content-Disposition: attachment.
+      window.location.href = downloadUrl;
     } catch (e) {
       setDownloading(null);
+      if (downloadWindow && !downloadWindow.closed) downloadWindow.close();
       toast.error((e as Error).message);
     }
   }
