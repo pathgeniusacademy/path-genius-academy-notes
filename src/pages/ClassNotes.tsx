@@ -1,18 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
-import { callNotesApi, createDownloadTicket, type NoteItem } from "@/lib/notesApi";
+import { callNotesApi, type NoteItem } from "@/lib/notesApi";
+import { startPersonalizedNoteDownload } from "@/lib/downloadNote";
 import { mainSupabase } from "@/lib/mainSupabase";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { useAuth } from "@/context/AuthContext";
+import { MAIN_SITE_URL } from "@/lib/config";
 
 type ClassVideo = { id: string; folder_id: string; title: string; description: string | null };
+type FolderInfo = { id: string; name: string };
 type Settings = { support_whatsapp: string | null; purchase_whatsapp: string | null };
 
 export default function ClassNotes() {
   const { classId = "" } = useParams();
   const { profile } = useAuth();
   const [classInfo, setClassInfo] = useState<ClassVideo | null>(null);
+  const [folderInfo, setFolderInfo] = useState<FolderInfo | null>(null);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +30,14 @@ export default function ClassNotes() {
         mainSupabase.from("class_videos").select("id,folder_id,title,description").eq("id", classId).maybeSingle(),
         mainSupabase.from("academy_settings").select("support_whatsapp,purchase_whatsapp").eq("id", 1).maybeSingle(),
       ]);
+
+      const video = (classRes.data as ClassVideo | null) || null;
+      let folder: FolderInfo | null = null;
+      if (video?.folder_id) {
+        const folderRes = await mainSupabase.from("class_folders").select("id,name").eq("id", video.folder_id).maybeSingle();
+        folder = (folderRes.data as FolderInfo | null) || null;
+      }
+
       try {
         const result = await callNotesApi<{ notes: NoteItem[] }>("listClassNotes", { classId });
         if (!alive) return;
@@ -34,7 +46,8 @@ export default function ClassNotes() {
         if (alive) toast.error((e as Error).message);
       }
       if (!alive) return;
-      setClassInfo((classRes.data as ClassVideo | null) || null);
+      setClassInfo(video);
+      setFolderInfo(folder);
       setSettings((settingsRes.data as Settings | null) || null);
       setLoading(false);
     }
@@ -44,73 +57,45 @@ export default function ClassNotes() {
 
   const supportUrl = useMemo(() => {
     const number = settings?.support_whatsapp || settings?.purchase_whatsapp;
-    const message = `Hi, I need help unlocking Class Notes.\n\nClass: ${classInfo?.title || classId}\nLogin ID: ${profile?.login_id || ""}\nRegistered Mobile: ${profile?.mobile || ""}`;
+    const message = `Hi, I need help unlocking the complete Notes Folder.\n\nFolder: ${folderInfo?.name || "Class Notes"}\nClass: ${classInfo?.title || classId}\nLogin ID: ${profile?.login_id || ""}\nRegistered Mobile: ${profile?.mobile || ""}`;
     return buildWhatsAppUrl(number, message);
-  }, [settings, classInfo, classId, profile]);
+  }, [settings, classInfo, folderInfo, classId, profile]);
 
   async function download(note: NoteItem) {
-    const isPathGeniusApp = /PathGeniusAcademyApp/i.test(navigator.userAgent);
-
-    // Desktop/mobile browsers can block a file download if it starts only
-    // after an awaited network request because the original user gesture has
-    // already expired. Open the download tab immediately while the click is
-    // still a trusted user action, then navigate it after the secure ticket
-    // is created.
-    let downloadWindow: Window | null = null;
-    if (!isPathGeniusApp) {
-      downloadWindow = window.open("", "_blank");
-      if (downloadWindow) {
-        try {
-          downloadWindow.document.title = "Preparing Path Genius Notes";
-          downloadWindow.document.body.innerHTML =
-            '<div style="font-family:system-ui;padding:32px;color:#0f274f">' +
-            '<h2 style="margin:0 0 10px">Path Genius Academy</h2>' +
-            '<p>Preparing your personalized PDF…</p></div>';
-        } catch {
-          // Ignore cosmetic failure; the window can still be navigated.
-        }
-      }
-    }
-
     setDownloading(note.id);
-
     try {
-      const { downloadUrl } = await createDownloadTicket(note.id);
-
-      setDownloading(null);
+      await startPersonalizedNoteDownload(note);
       toast.success("Personalized PDF ready. Download starting…");
-
-      if (isPathGeniusApp) {
-        // Android WebView: keep the direct HTTPS navigation so the native
-        // DownloadListener can save the attachment.
-        window.location.href = downloadUrl;
-        return;
-      }
-
-      if (downloadWindow && !downloadWindow.closed) {
-        downloadWindow.location.href = downloadUrl;
-        return;
-      }
-
-      // Popup blocked: fall back to a same-tab top-level navigation.
-      // The URL returns Content-Disposition: attachment.
-      window.location.href = downloadUrl;
     } catch (e) {
-      setDownloading(null);
-      if (downloadWindow && !downloadWindow.closed) downloadWindow.close();
       toast.error((e as Error).message);
+    } finally {
+      setDownloading(null);
     }
   }
+
+  const folderUnlocked = notes.some((note) => note.unlocked);
+  const mainClassUrl = classInfo?.folder_id ? `${MAIN_SITE_URL}/free-classes/${classInfo.folder_id}` : `${MAIN_SITE_URL}/free-classes`;
 
   return (
     <div className="class-page">
       <section className="hero-card">
-        <div><span className="eyebrow orange">CLASS NOTES</span><h2>{classInfo?.title || "Class Notes"}</h2><p>{classInfo?.description || "Personalized notes prepared for Path Genius Academy students."}</p></div>
+        <div>
+          <span className="eyebrow orange">CLASS NOTES</span>
+          <h2>{classInfo?.title || "Class Notes"}</h2>
+          <p>{folderInfo?.name ? `${folderInfo.name} • ` : ""}Personalized notes for Path Genius Academy students.</p>
+          <div className="hero-actions">
+            <a href={mainClassUrl} className="hero-link">▶ Open Class</a>
+            {classInfo?.folder_id && <Link to={`/folder/${classInfo.folder_id}`} className="hero-link secondary">📚 Folder Notes</Link>}
+          </div>
+        </div>
         <div className="hero-lock">📄</div>
       </section>
 
       <section className="panel">
-        <div className="section-head"><div><span className="eyebrow">AVAILABLE FILES</span><h2>Notes for this class</h2></div><span className="secure-pill">Watermarked for you</span></div>
+        <div className="section-head">
+          <div><span className="eyebrow">AVAILABLE FILES</span><h2>Notes for this class</h2></div>
+          <span className="secure-pill">{folderUnlocked ? "✓ Folder Access Active" : "Watermarked for you"}</span>
+        </div>
         {loading ? <div className="spinner" /> : notes.length === 0 ? (
           <div className="empty"><div>📝</div><h3>Notes not added yet</h3><p>When notes for this class are published, they will appear here automatically.</p></div>
         ) : (
@@ -118,7 +103,11 @@ export default function ClassNotes() {
             {notes.map((note) => (
               <div className={`note-card static ${note.unlocked ? "unlocked" : "locked"}`} key={note.id}>
                 <div className="pdf-icon">PDF</div>
-                <div className="note-card-body"><span>{note.subject_name || "Path Genius Notes"}</span><h3>{note.note_title}</h3><p>{note.unlocked ? "Access enabled • Personalized on download" : "Access required"}</p></div>
+                <div className="note-card-body">
+                  <span>{note.subject_name || "Path Genius Notes"}</span>
+                  <h3>{note.note_title}</h3>
+                  <p>{note.unlocked ? "Folder unlocked • Personalized on download" : "Complete folder access required"}</p>
+                </div>
                 {note.unlocked ? (
                   <button className="primary-small" onClick={() => void download(note)} disabled={downloading === note.id}>{downloading === note.id ? "Preparing…" : "Download"}</button>
                 ) : supportUrl ? (
@@ -128,7 +117,7 @@ export default function ClassNotes() {
             ))}
           </div>
         )}
-        <div className="privacy-note"><strong>Personalized protection:</strong> every downloaded page contains the logged-in student's name, mobile number and Login ID as repeated watermarks.</div>
+        <div className="privacy-note"><strong>Folder-wise access:</strong> once this folder is unlocked, every PDF added inside the folder (including its subfolders) becomes available to that student. Every download is personalized with the student's name, mobile number and Login ID.</div>
       </section>
     </div>
   );

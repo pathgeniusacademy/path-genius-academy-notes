@@ -31,7 +31,7 @@ export default function Login() {
           <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Your password" /></label>
           <button className="primary-btn" disabled={loading}>{loading ? "Signing in…" : "Login to Notes"}</button>
         </form>
-        <div className="login-footer"><a href={MAIN_SITE_URL}>← Back to Main App</a><Link to="/admin/login">Admin</Link></div>
+        <div className="login-footer"><a href={`${MAIN_SITE_URL}/free-classes`}>← Back to Classes</a><Link to="/admin/login">Admin</Link></div>
       </div>
     </div>
   );

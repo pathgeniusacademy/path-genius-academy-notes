@@ -11,13 +11,10 @@ export default function AppShell() {
         <div className="topbar-inner">
           <Link to="/" className="brand">
             <div className="brand-mark">PG</div>
-            <div>
-              <strong>Path Genius Academy</strong>
-              <span>Class Notes</span>
-            </div>
+            <div><strong>Path Genius Academy</strong><span>Class Notes</span></div>
           </Link>
           <div className="top-actions">
-            <a href={MAIN_SITE_URL} className="ghost-btn">← Main App</a>
+            <a href={`${MAIN_SITE_URL}/free-classes`} className="ghost-btn">← Classes</a>
             <button className="ghost-btn" onClick={() => void signOut()}>Logout</button>
           </div>
         </div>
@@ -29,7 +26,8 @@ export default function AppShell() {
         </div>
         <nav className="mini-nav">
           <Link className={loc.pathname === "/" ? "active" : ""} to="/">My Notes</Link>
-          <a href={MAIN_SITE_URL}>Classes</a>
+          <a href={`${MAIN_SITE_URL}/free-classes`}>Classes</a>
+          <a href={`${MAIN_SITE_URL}/dashboard`}>Main Dashboard</a>
         </nav>
         <Outlet />
       </main>

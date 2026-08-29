@@ -12,6 +12,7 @@ export type NoteItem = {
   created_at: string;
   unlocked?: boolean;
   granted_count?: number;
+  folder_granted_count?: number;
 };
 
 async function authHeaders() {
@@ -37,5 +38,5 @@ export async function callNotesApi<T>(action: string, payload: Record<string, un
 }
 
 export async function createDownloadTicket(noteId: string) {
-  return callNotesApi<{ downloadUrl: string; fileName: string }>("createDownloadTicket", { noteId });
+  return callNotesApi<{ downloadUrl: string; fileName: string; expiresIn?: number }>("createDownloadTicket", { noteId });
 }
