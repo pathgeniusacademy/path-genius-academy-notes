@@ -70,7 +70,7 @@ export default function FolderNotes() {
                 <div className="pdf-icon">PDF</div>
                 <div className="note-card-body"><span>{note.class_title}</span><h3>{note.note_title}</h3><p>Personalized watermark on download</p></div>
                 <div className="folder-note-actions">
-                  <Link className="ghost-small" to={`/class/${note.main_class_id}`}>Class</Link>
+                  {!note.main_class_id.startsWith("folder-") && <Link className="ghost-small" to={`/class/${note.main_class_id}`}>Class</Link>}
                   <button className="primary-small" onClick={() => void download(note)} disabled={downloading === note.id}>{downloading === note.id ? "Preparing…" : "Download"}</button>
                 </div>
               </div>

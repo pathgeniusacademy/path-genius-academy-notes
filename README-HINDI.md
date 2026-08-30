@@ -1,27 +1,18 @@
-# Path Genius Notes - Folder-wise Access Frontend
+PATH GENIUS NOTES V9
 
-Ye ZIP **Notes website GitHub repo** `path-genius-academy-notes` me replace/push karna hai.
+Features
+1. Upload workflow is Folder -> Class.
+2. Every folder also has "Folder Notes - no lecture required" so PDFs can be uploaded even if no YouTube class exists.
+3. Paid Student Lists: create List 1/List 2/etc., add/remove students, and grant/revoke any notes folder to the whole list in one click.
+4. List access is dynamic: students added later inherit all active folder grants of that list; students removed lose list-only access automatically.
+5. Existing direct per-student folder access continues to work.
+6. Folder grants include subfolders through the existing folder inheritance system.
 
-## Features
-- Single PDF access hata kar folder-wise access UI.
-- Student ko unlocked PDFs folder cards me dikhengi.
-- Folder page se saari PDFs download.
-- Class page se Class + Folder Notes dono navigation.
-- Main Path Genius website ke Classes/Dashboard ke direct links.
-- Current working personalized signed-storage PDF download flow preserved.
+Deployment order (important)
+A. Notes Supabase SQL Editor: run APPLY-NOTES-PAID-LISTS-V9.sql
+B. Notes Supabase Edge Functions -> notes-api: deploy V9 index.ts, Verify JWT OFF
+C. Notes website GitHub: replace the 4 frontend files and push once
+D. Android GitHub: apply v2.5.0 patch so Notes stays inside the app and PDFs download through Android DownloadManager
 
-## GitHub me push files
-- src/App.tsx
-- src/components/AppShell.tsx
-- src/lib/downloadNote.ts (NEW)
-- src/lib/notesApi.ts
-- src/pages/AdminNotes.tsx
-- src/pages/ClassNotes.tsx
-- src/pages/Dashboard.tsx
-- src/pages/FolderNotes.tsx (NEW)
-- src/pages/Login.tsx
-- src/styles.css
-
-Commit: `Add folder-wise notes access and linked navigation`
-
-**Important:** SQL aur Edge Function alag deploy honge. Unko Notes website GitHub patch samajhkar mix mat karna.
+Main website
+No additional main-site deploy is required just to create a notes-only folder. In the existing Main Admin -> Free Classes Manager, create a normal folder/subfolder and simply do not add a YouTube class. V9 Notes Admin will still allow folder-only PDF uploads to it.

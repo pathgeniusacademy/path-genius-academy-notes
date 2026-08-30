@@ -57,14 +57,14 @@ export default function Dashboard() {
             {groups.map((group) => {
               const first = group.notes[0];
               const href = first.main_folder_id ? `/folder/${first.main_folder_id}` : `/class/${first.main_class_id}`;
-              const classCount = new Set(group.notes.map((n) => n.main_class_id)).size;
+              const classCount = new Set(group.notes.filter((n) => !n.main_class_id.startsWith("folder-")).map((n) => n.main_class_id)).size;
               return (
                 <Link to={href} className="folder-card" key={group.id}>
                   <div className="folder-icon">📚</div>
                   <div className="folder-card-body">
                     <span>UNLOCKED FOLDER</span>
                     <h3>{group.name}</h3>
-                    <p>{group.notes.length} PDF{group.notes.length === 1 ? "" : "s"} • {classCount} class{classCount === 1 ? "" : "es"}</p>
+                    <p>{group.notes.length} PDF{group.notes.length === 1 ? "" : "s"}{classCount > 0 ? ` • ${classCount} class${classCount === 1 ? "" : "es"}` : " • notes-only folder"}</p>
                   </div>
                   <div className="arrow">›</div>
                 </Link>
