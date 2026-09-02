@@ -294,20 +294,27 @@ export default function AdminNotes() {
   }
 
   return (
-    <div className="admin-bg">
-      <header className="admin-top">
-        <div><div className="brand"><div className="brand-mark">PG</div><div><strong>Path Genius Notes</strong><span>Secure Admin</span></div></div></div>
+    <div className="admin-bg premium-admin-bg">
+      <header className="admin-top premium-admin-top">
+        <div><div className="brand premium-brand"><div className="brand-mark premium-brand-mark"><span>PG</span></div><div className="brand-copy"><strong>Path Genius Notes</strong><span>Admin Control Center</span></div></div></div>
         <div className="top-actions"><a href={MAIN_SITE_URL + "/admin/dashboard"} className="ghost-btn">Main Admin</a><button className="ghost-btn" onClick={() => void signOut()}>Logout</button></div>
       </header>
 
-      <main className="admin-wrap">
-        <div className="admin-heading">
-          <div><span className="eyebrow">PDF CONTROL CENTER</span><h1>Class Notes Manager</h1><p>Folder first → class second. Folder-only notes and paid student lists are supported.</p></div>
-          <span className="secure-pill">🔐 Private Storage</span>
+      <main className="admin-wrap premium-admin-wrap">
+        <div className="admin-heading premium-admin-heading">
+          <div><span className="eyebrow">PDF CONTROL CENTER</span><h1>Notes Command Center</h1><p>Upload, organize and unlock protected notes with folder-wise access.</p></div>
+          <span className="secure-pill premium-admin-secure"><span className="pulse-dot" />Private Storage</span>
         </div>
 
+        <section className="admin-stats">
+          <div><span className="admin-stat-icon blue">PDF</span><p><strong>{notes.length}</strong><small>Uploaded PDFs</small></p></div>
+          <div><span className="admin-stat-icon orange">▦</span><p><strong>{folders.length}</strong><small>Notes folders</small></p></div>
+          <div><span className="admin-stat-icon teal">◎</span><p><strong>{students.length}</strong><small>Students</small></p></div>
+          <div><span className="admin-stat-icon purple">◆</span><p><strong>{accessLists.length}</strong><small>Paid lists</small></p></div>
+        </section>
+
         <div className="admin-grid">
-          <section className="panel">
+          <section className="panel premium-panel">
             <div className="section-head"><div><span className="eyebrow">UPLOAD</span><h2>Add notes PDF</h2></div></div>
             <div className="form-stack">
               <label>1. Folder
@@ -330,7 +337,7 @@ export default function AdminNotes() {
             </div>
           </section>
 
-          <section className="panel">
+          <section className="panel premium-panel">
             <div className="section-head"><div><span className="eyebrow">FOLDER ACCESS</span><h2>Direct student access</h2></div></div>
             <div className="form-stack">
               <label>Notes folder<select value={selectedFolder} onChange={(e) => setSelectedFolder(e.target.value)}><option value="">Select folder</option>{folderRows.map((f) => <option key={f.id} value={f.id}>{f.label} — {f.pdfCount} PDF{f.pdfCount === 1 ? "" : "s"}</option>)}</select></label>
@@ -346,7 +353,7 @@ export default function AdminNotes() {
           </section>
         </div>
 
-        <section className="panel">
+        <section className="panel premium-panel">
           <div className="section-head"><div><span className="eyebrow">PAID STUDENT LISTS</span><h2>List 1, List 2… manage once, unlock folders in one click</h2></div><span className="count-chip">{accessLists.length} list{accessLists.length === 1 ? "" : "s"}</span></div>
           <div className="list-admin-grid">
             <div className="list-create-box">
@@ -392,7 +399,7 @@ export default function AdminNotes() {
           <div className="privacy-note"><strong>Automatic list access:</strong> if you grant a folder to a list, every current member gets it. Add a student later and the same folder access applies automatically. Remove a student and list-based access is removed automatically (unless that student also has direct access or access through another list).</div>
         </section>
 
-        <section className="panel">
+        <section className="panel premium-panel">
           <div className="section-head"><div><span className="eyebrow">LIBRARY</span><h2>Uploaded notes</h2></div><span className="count-chip">{notes.length}</span></div>
           {notes.length === 0 ? <div className="empty"><p>No PDFs uploaded yet.</p></div> : <div className="admin-note-list">{notes.map((n) => <div className="admin-note-row" key={n.id}><div className="pdf-icon">PDF</div><div className="grow"><span>{n.main_folder_id ? folderPath(n.main_folder_id) : n.subject_name || "Notes"}</span><strong>{n.main_class_id.startsWith("folder-") ? "Folder Notes" : n.class_title}</strong><p>{n.note_title}</p></div><button className="danger-small" onClick={() => void deleteNote(n)}>Delete</button></div>)}</div>}
         </section>

@@ -77,47 +77,47 @@ export default function ClassNotes() {
   const mainClassUrl = classInfo?.folder_id ? `${MAIN_SITE_URL}/free-classes/${classInfo.folder_id}` : `${MAIN_SITE_URL}/free-classes`;
 
   return (
-    <div className="class-page">
-      <section className="hero-card">
+    <div className="class-page content-stack">
+      <section className={`hero-card premium-content-hero ${folderUnlocked ? "unlocked-hero" : "locked-hero"}`}>
         <div>
-          <span className="eyebrow orange">CLASS NOTES</span>
+          <div className="hero-badge light"><span>{folderUnlocked ? "✓" : "◆"}</span> CLASS NOTES</div>
           <h2>{classInfo?.title || "Class Notes"}</h2>
-          <p>{folderInfo?.name ? `${folderInfo.name} • ` : ""}Personalized notes for Path Genius Academy students.</p>
-          <div className="hero-actions">
+          <p>{folderInfo?.name ? `${folderInfo.name} • ` : ""}High-quality personalized notes for Path Genius Academy students.</p>
+          <div className="hero-actions premium-actions">
             <a href={mainClassUrl} className="hero-link">▶ Open Class</a>
             {classInfo?.folder_id && <Link to={`/folder/${classInfo.folder_id}`} className="hero-link secondary">📚 Folder Notes</Link>}
           </div>
         </div>
-        <div className="hero-lock">📄</div>
+        <div className="content-hero-art" aria-hidden="true"><div className="hero-folder">📄</div><span>{folderUnlocked ? "✓" : "🔒"}</span><span>PG</span></div>
       </section>
 
-      <section className="panel">
-        <div className="section-head">
-          <div><span className="eyebrow">AVAILABLE FILES</span><h2>Notes for this class</h2></div>
-          <span className="secure-pill">{folderUnlocked ? "✓ Folder Access Active" : "Watermarked for you"}</span>
+      <section className="panel premium-panel">
+        <div className="section-head premium-section-head">
+          <div><span className="eyebrow">AVAILABLE MATERIAL</span><h2>Notes for this class</h2><p>Secure PDFs connected to this lecture.</p></div>
+          <span className={`secure-pill ${folderUnlocked ? "access-active" : ""}`}>{folderUnlocked ? "✓ Folder Access Active" : "◆ Personalized for you"}</span>
         </div>
-        {loading ? <div className="spinner" /> : notes.length === 0 ? (
-          <div className="empty"><div>📝</div><h3>Notes not added yet</h3><p>When notes for this class are published, they will appear here automatically.</p></div>
+        {loading ? <div className="loading-panel"><div className="spinner" /><p>Checking notes access…</p></div> : notes.length === 0 ? (
+          <div className="empty premium-empty"><div className="empty-icon">📝</div><h3>Notes not added yet</h3><p>When notes for this class are published, they will appear here automatically.</p></div>
         ) : (
-          <div className="notes-grid">
-            {notes.map((note) => (
-              <div className={`note-card static ${note.unlocked ? "unlocked" : "locked"}`} key={note.id}>
-                <div className="pdf-icon">PDF</div>
+          <div className="notes-grid premium-notes-grid">
+            {notes.map((note, index) => (
+              <article className={`note-card static premium-note-card ${note.unlocked ? "unlocked" : "locked"}`} key={note.id}>
+                <div className={`pdf-icon premium-pdf-icon ${note.unlocked ? "" : "locked-pdf"}`}><b>PDF</b><small>{String(index + 1).padStart(2, "0")}</small></div>
                 <div className="note-card-body">
                   <span>{note.subject_name || "Path Genius Notes"}</span>
                   <h3>{note.note_title}</h3>
-                  <p>{note.unlocked ? "Folder unlocked • Personalized on download" : "Complete folder access required"}</p>
+                  <p>{note.unlocked ? "✓ Folder unlocked • Personalized on download" : "🔒 Complete folder access required"}</p>
                 </div>
                 {note.unlocked ? (
-                  <button className="primary-small" onClick={() => void download(note)} disabled={downloading === note.id}>{downloading === note.id ? "Preparing…" : "Download"}</button>
+                  <button className="primary-small download-btn" onClick={() => void download(note)} disabled={downloading === note.id}>{downloading === note.id ? "Preparing…" : "Download PDF ↓"}</button>
                 ) : supportUrl ? (
-                  <a className="support-small" href={supportUrl}>🔒 Contact Support</a>
+                  <a className="support-small premium-support" href={supportUrl}>🔒 Contact Support</a>
                 ) : <span className="locked-label">🔒 Locked</span>}
-              </div>
+              </article>
             ))}
           </div>
         )}
-        <div className="privacy-note"><strong>Folder-wise access:</strong> once this folder is unlocked, every PDF added inside the folder (including its subfolders) becomes available to that student. Every download is personalized with the student's name, mobile number and Login ID.</div>
+        <div className="privacy-note premium-privacy"><strong>Folder-wise access</strong><span>Once this folder is unlocked, every PDF added inside it (including subfolders) is available automatically. Every download includes the student's name, mobile number and Login ID.</span></div>
       </section>
     </div>
   );
