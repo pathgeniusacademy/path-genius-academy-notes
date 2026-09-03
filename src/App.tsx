@@ -6,6 +6,7 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import ClassNotes from "@/pages/ClassNotes";
 import FolderNotes from "@/pages/FolderNotes";
+import GraphVisualizer from "@/pages/GraphVisualizer";
 import AdminLogin from "@/pages/AdminLogin";
 import AdminNotes from "@/pages/AdminNotes";
 
@@ -16,6 +17,7 @@ export default function App() {
     <Route element={<ProtectedRoute />}>
       <Route element={<AppShell />}>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/graph" element={<GraphVisualizer />} />
         <Route path="/folder/:folderId" element={<FolderNotes />} />
         <Route path="/class/:classId" element={<ClassNotes />} />
       </Route>
