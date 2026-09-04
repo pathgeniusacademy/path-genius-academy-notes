@@ -2,6 +2,8 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { MAIN_SITE_URL } from "@/lib/config";
 
+const DESMOS_URL = "https://www.desmos.com/calculator";
+
 function Icon({ name }: { name: "home" | "graph" | "classes" | "dashboard" | "profile" }) {
   const paths = {
     home: "M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z",
@@ -28,7 +30,7 @@ export default function AppShell() {
             <div className="brand-copy"><strong>Path Genius Academy</strong><span>Secure Notes Vault</span></div>
           </Link>
           <div className="top-actions">
-            <Link to="/graph" className="ghost-btn desktop-action">2D Graph</Link>
+            <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer" className="ghost-btn desktop-action">Graph Calculator</a>
             <a href={`${MAIN_SITE_URL}/free-classes`} className="ghost-btn desktop-action">Classes</a>
             <div className="profile-chip desktop-action"><span>{(profile?.full_name || profile?.login_id || "S").slice(0,1).toUpperCase()}</span><small>{profile?.login_id}</small></div>
             <button className="ghost-btn" onClick={() => void signOut()}>Logout</button>
@@ -48,7 +50,7 @@ export default function AppShell() {
 
         <nav className="mini-nav premium-mini-nav">
           <Link className={loc.pathname === "/" ? "active" : ""} to="/"><Icon name="home" />My Notes</Link>
-          <Link className={loc.pathname === "/graph" ? "active" : ""} to="/graph"><Icon name="graph" />2D Graph</Link>
+          <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer"><Icon name="graph" />Graph Calculator</a>
           <a href={`${MAIN_SITE_URL}/free-classes`}><Icon name="classes" />Classes</a>
           <a href={`${MAIN_SITE_URL}/dashboard`}><Icon name="dashboard" />Main Dashboard</a>
         </nav>
@@ -56,9 +58,9 @@ export default function AppShell() {
         <Outlet />
       </main>
 
-      <nav className="mobile-bottom-nav graph-enabled-nav" aria-label="Notes navigation">
+      <nav className="mobile-bottom-nav desmos-enabled-nav" aria-label="Notes navigation">
         <Link className={loc.pathname === "/" ? "active" : ""} to="/"><Icon name="home" /><span>Notes</span></Link>
-        <Link className={loc.pathname === "/graph" ? "active" : ""} to="/graph"><Icon name="graph" /><span>Graph</span></Link>
+        <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer"><Icon name="graph" /><span>Graph</span></a>
         <a href={`${MAIN_SITE_URL}/free-classes`}><Icon name="classes" /><span>Classes</span></a>
         <a href={`${MAIN_SITE_URL}/dashboard`}><Icon name="dashboard" /><span>Dashboard</span></a>
         <button onClick={() => void signOut()}><Icon name="profile" /><span>Logout</span></button>

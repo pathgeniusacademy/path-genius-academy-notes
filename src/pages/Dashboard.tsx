@@ -4,6 +4,8 @@ import { Link } from "react-router-dom";
 import { callNotesApi, type NoteItem } from "@/lib/notesApi";
 import { MAIN_SITE_URL } from "@/lib/config";
 
+const DESMOS_URL = "https://www.desmos.com/calculator";
+
 type FolderGroup = {
   id: string;
   name: string;
@@ -45,7 +47,7 @@ export default function Dashboard() {
           <p>Every unlocked PDF is personalized for your account and protected with your student details.</p>
           <div className="hero-actions premium-actions">
             <a href={`${MAIN_SITE_URL}/free-classes`} className="hero-link">▶ Continue Classes</a>
-            <Link to="/graph" className="hero-link secondary">📈 Open 2D Graph Lab</Link>
+            <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer" className="hero-link secondary">📈 Open Graph Calculator</a>
             <a href={`${MAIN_SITE_URL}/dashboard`} className="hero-link secondary">Open Main Dashboard</a>
           </div>
         </div>

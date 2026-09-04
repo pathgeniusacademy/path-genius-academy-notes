@@ -1,0 +1,16 @@
+PATH GENIUS NOTES — FINAL DESMOS PATCH
+
+No manual deletion is required.
+
+Upload/replace ONLY these 4 files in the same paths in your existing GitHub repository:
+
+1. src/App.tsx
+2. src/components/AppShell.tsx
+3. src/pages/Dashboard.tsx
+4. src/styles.css
+
+If old files src/pages/GraphVisualizer.tsx and src/lib/mathExpression.ts still exist, leave them there.
+The final App.tsx no longer imports or routes to the custom graph system, so those old files are inactive and do not affect the website.
+
+Suggested commit message:
+Replace custom graph with Desmos calculator
