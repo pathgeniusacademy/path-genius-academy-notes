@@ -1,4 +1,5 @@
 import { createDownloadTicket, type NoteItem } from "@/lib/notesApi";
+import { rememberRecentNote } from "@/lib/recentNotes";
 
 export async function startPersonalizedNoteDownload(note: NoteItem) {
   const isPathGeniusApp = /PathGeniusAcademyApp/i.test(navigator.userAgent);
@@ -21,6 +22,7 @@ export async function startPersonalizedNoteDownload(note: NoteItem) {
 
   try {
     const { downloadUrl } = await createDownloadTicket(note.id);
+    rememberRecentNote(note);
 
     if (isPathGeniusApp) {
       window.location.href = downloadUrl;

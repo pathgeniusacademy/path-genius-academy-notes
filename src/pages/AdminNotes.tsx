@@ -8,7 +8,7 @@ import { MAIN_SITE_URL } from "@/lib/config";
 
 type Folder = { id: string; name: string; parent_id: string | null };
 type Video = { id: string; folder_id: string; title: string; is_active: boolean };
-type Student = { id: string; full_name: string; login_id: string; mobile: string | null; is_active: boolean };
+type Student = { id: string; full_name: string; login_id: string; mobile: string | null; optional_email?: string | null; is_active: boolean; test_access_enabled?: boolean };
 type AccessList = {
   id: string;
   name: string;
@@ -31,6 +31,10 @@ export default function AdminNotes() {
   const [uploadFolder, setUploadFolder] = useState("");
   const [selectedClass, setSelectedClass] = useState(FOLDER_ONLY);
   const [title, setTitle] = useState("Class Notes");
+  const [description, setDescription] = useState("");
+  const [displayOrder, setDisplayOrder] = useState(0);
+  const [accessType, setAccessType] = useState<"free" | "test_series" | "selected_users">("selected_users");
+  const [published, setPublished] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -49,11 +53,23 @@ export default function AdminNotes() {
   const [listStudentQuery, setListStudentQuery] = useState("");
   const [savingList, setSavingList] = useState(false);
 
+  // Per-note access/editor. Existing student_note_access is reused.
+  const [selectedAccessNote, setSelectedAccessNote] = useState<string>("");
+  const [noteGrantedIds, setNoteGrantedIds] = useState<Set<string>>(new Set());
+  const [noteStudentQuery, setNoteStudentQuery] = useState("");
+  const [noteSearch, setNoteSearch] = useState("");
+  const [noteAccessFilter, setNoteAccessFilter] = useState<"all" | "free" | "test_series" | "selected_users">("all");
+  const [notePublishedFilter, setNotePublishedFilter] = useState<"all" | "published" | "unpublished">("all");
+  const [editingNoteId, setEditingNoteId] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editOrder, setEditOrder] = useState(0);
+
   async function loadMain() {
     const [f, v, s] = await Promise.all([
       mainSupabase.from("class_folders").select("id,name,parent_id").eq("is_active", true).order("name"),
       mainSupabase.from("class_videos").select("id,folder_id,title,is_active").eq("is_active", true).order("title"),
-      mainSupabase.from("profiles").select("id,full_name,login_id,mobile,is_active").eq("role", "student").order("full_name"),
+      mainSupabase.from("profiles").select("id,full_name,login_id,mobile,optional_email,is_active,test_access_enabled").eq("role", "student").order("full_name"),
     ]);
     if (f.error) toast.error(f.error.message); else setFolders((f.data as Folder[]) || []);
     if (v.error) toast.error(v.error.message); else setVideos((v.data as Video[]) || []);
@@ -150,14 +166,37 @@ export default function AdminNotes() {
   const filteredStudents = useMemo(() => {
     const q = studentQuery.trim().toLowerCase();
     if (!q) return students.slice(0, 40);
-    return students.filter((s) => `${s.full_name} ${s.login_id} ${s.mobile || ""}`.toLowerCase().includes(q)).slice(0, 80);
+    return students.filter((s) => `${s.full_name} ${s.login_id} ${s.mobile || ""} ${s.optional_email || ""}`.toLowerCase().includes(q)).slice(0, 80);
   }, [students, studentQuery]);
 
   const filteredListStudents = useMemo(() => {
     const q = listStudentQuery.trim().toLowerCase();
     if (!q) return students.slice(0, 50);
-    return students.filter((s) => `${s.full_name} ${s.login_id} ${s.mobile || ""}`.toLowerCase().includes(q)).slice(0, 100);
+    return students.filter((s) => `${s.full_name} ${s.login_id} ${s.mobile || ""} ${s.optional_email || ""}`.toLowerCase().includes(q)).slice(0, 100);
   }, [students, listStudentQuery]);
+
+  const filteredNoteStudents = useMemo(() => {
+    const q = noteStudentQuery.trim().toLowerCase();
+    const rows = q
+      ? students.filter((s) => `${s.full_name} ${s.login_id} ${s.mobile || ""} ${s.optional_email || ""}`.toLowerCase().includes(q))
+      : students;
+    return rows.slice(0, 100);
+  }, [students, noteStudentQuery]);
+
+  const allowedNoteStudents = useMemo(
+    () => students.filter((student) => noteGrantedIds.has(student.id)).sort((a, b) => a.full_name.localeCompare(b.full_name)),
+    [students, noteGrantedIds]
+  );
+
+  const filteredNotes = useMemo(() => {
+    const q = noteSearch.trim().toLowerCase();
+    return notes.filter((note) => {
+      const matchesSearch = !q || `${note.note_title} ${note.subject_name || ""} ${note.class_title || ""}`.toLowerCase().includes(q);
+      const matchesAccess = noteAccessFilter === "all" || note.access_type === noteAccessFilter;
+      const matchesPublished = notePublishedFilter === "all" || (notePublishedFilter === "published" ? note.is_active : !note.is_active);
+      return matchesSearch && matchesAccess && matchesPublished;
+    });
+  }, [notes, noteSearch, noteAccessFilter, notePublishedFilter]);
 
   const selectedFolderMeta = folderRows.find((f) => f.id === selectedFolder);
   const selectedListMeta = accessLists.find((l) => l.id === selectedList);
@@ -196,12 +235,20 @@ export default function AdminNotes() {
         subjectName: folderPath(uploadFolder),
         classTitle,
         noteTitle: title.trim() || "Class Notes",
+        description: description.trim(),
+        displayOrder,
+        accessType,
+        isActive: published,
         storagePath: signed.path,
       });
 
       toast.success(isFolderOnly ? "Folder notes uploaded securely" : "Class notes uploaded securely");
       setFile(null);
       setTitle("Class Notes");
+      setDescription("");
+      setDisplayOrder(0);
+      setAccessType("selected_users");
+      setPublished(true);
       await loadNotes();
     } catch (e) { toast.error((e as Error).message); }
     finally { setUploading(false); }
@@ -284,6 +331,62 @@ export default function AdminNotes() {
     } catch (e) { toast.error((e as Error).message); }
   }
 
+  async function updateNote(note: NoteItem, patch: Partial<Pick<NoteItem, "note_title" | "description" | "display_order" | "is_active" | "access_type">>) {
+    try {
+      await callNotesApi("adminUpdateNote", {
+        noteId: note.id,
+        noteTitle: patch.note_title ?? note.note_title,
+        description: patch.description ?? note.description ?? "",
+        displayOrder: patch.display_order ?? note.display_order ?? 0,
+        isActive: patch.is_active ?? note.is_active,
+        accessType: patch.access_type ?? note.access_type,
+      });
+      setNotes((current) => current.map((item) => item.id === note.id ? { ...item, ...patch } : item));
+      toast.success("Note settings updated");
+    } catch (e) { toast.error((e as Error).message); }
+  }
+
+  function openNoteEditor(note: NoteItem) {
+    if (editingNoteId === note.id) { setEditingNoteId(""); return; }
+    setEditingNoteId(note.id);
+    setEditTitle(note.note_title);
+    setEditDescription(note.description || "");
+    setEditOrder(note.display_order || 0);
+  }
+
+  async function saveNoteEditor(note: NoteItem) {
+    const nextTitle = editTitle.trim() || "Class Notes";
+    await updateNote(note, { note_title: nextTitle, description: editDescription.trim(), display_order: editOrder });
+    setEditingNoteId("");
+  }
+
+  async function openSelectedUsers(noteId: string) {
+    if (selectedAccessNote === noteId) {
+      setSelectedAccessNote("");
+      setNoteGrantedIds(new Set());
+      return;
+    }
+    setSelectedAccessNote(noteId);
+    setNoteStudentQuery("");
+    try {
+      const result = await callNotesApi<{ studentIds: string[] }>("adminListAccess", { noteId });
+      setNoteGrantedIds(new Set(result.studentIds));
+    } catch (e) { toast.error((e as Error).message); }
+  }
+
+  async function setNoteStudentAccess(noteId: string, studentId: string, grant: boolean) {
+    try {
+      await callNotesApi("adminSetAccess", { noteId, studentId, grant });
+      setNoteGrantedIds((prev) => {
+        const next = new Set(prev);
+        if (grant) next.add(studentId); else next.delete(studentId);
+        return next;
+      });
+      setNotes((current) => current.map((note) => note.id === noteId ? { ...note, granted_count: Math.max(0, (note.granted_count || 0) + (grant ? 1 : -1)) } : note));
+      toast.success(grant ? "Student added to this note" : "Student removed from this note");
+    } catch (e) { toast.error((e as Error).message); }
+  }
+
   async function deleteNote(note: NoteItem) {
     if (!confirm(`Delete “${note.note_title}” from ${note.class_title}?`)) return;
     try {
@@ -331,6 +434,15 @@ export default function AdminNotes() {
               </label>
               {uploadFolder && uploadClasses.length === 0 && <div className="folder-access-info"><strong>Notes-only folder ready</strong><small>This folder has no lecture yet. You can still upload as many PDFs as you want here.</small></div>}
               <label>Notes title<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Complete Chapter Notes" /></label>
+              <label>Description (optional)<input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short topic / chapter description" /></label>
+              <div className="admin-inline-fields">
+                <label>Order<input type="number" value={displayOrder} onChange={(e) => setDisplayOrder(Number(e.target.value) || 0)} /></label>
+                <label>Status<select value={published ? "published" : "unpublished"} onChange={(e) => setPublished(e.target.value === "published")}><option value="published">Published</option><option value="unpublished">Unpublished</option></select></label>
+              </div>
+              <label>Access type
+                <select value={accessType} onChange={(e) => setAccessType(e.target.value as "free" | "test_series" | "selected_users")}><option value="free">FREE FOR ALL</option><option value="test_series">TEST SERIES ACCESS</option><option value="selected_users">SELECTED USERS</option></select>
+              </label>
+              <div className="folder-access-info"><strong>{accessType === "free" ? "FREE" : accessType === "test_series" ? "TEST SERIES" : "SELECTED USERS"}</strong><small>{accessType === "free" ? "Any logged-in active student can open this note." : accessType === "test_series" ? "Uses the main website's existing Test Series entitlement." : "Only students explicitly allowed for this note (plus existing compatible folder/list grants) can open it."}</small></div>
               <label>PDF file<input type="file" accept="application/pdf,.pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
               {file && <div className="file-chip">📄 {file.name} • {(file.size / 1024 / 1024).toFixed(2)} MB</div>}
               <button className="primary-btn" disabled={uploading || !uploadFolder} onClick={() => void uploadNote()}>{uploading ? "Uploading…" : "Upload Secure PDF"}</button>
@@ -400,8 +512,30 @@ export default function AdminNotes() {
         </section>
 
         <section className="panel premium-panel">
-          <div className="section-head"><div><span className="eyebrow">LIBRARY</span><h2>Uploaded notes</h2></div><span className="count-chip">{notes.length}</span></div>
-          {notes.length === 0 ? <div className="empty"><p>No PDFs uploaded yet.</p></div> : <div className="admin-note-list">{notes.map((n) => <div className="admin-note-row" key={n.id}><div className="pdf-icon">PDF</div><div className="grow"><span>{n.main_folder_id ? folderPath(n.main_folder_id) : n.subject_name || "Notes"}</span><strong>{n.main_class_id.startsWith("folder-") ? "Folder Notes" : n.class_title}</strong><p>{n.note_title}</p></div><button className="danger-small" onClick={() => void deleteNote(n)}>Delete</button></div>)}</div>}
+          <div className="section-head"><div><span className="eyebrow">LIBRARY</span><h2>Uploaded notes</h2><p>Search, filter and control each PDF without changing the existing storage path.</p></div><span className="count-chip">{filteredNotes.length}/{notes.length}</span></div>
+          <div className="note-admin-filters">
+            <input value={noteSearch} onChange={(e) => setNoteSearch(e.target.value)} placeholder="Search title, class or folder" />
+            <select value={noteAccessFilter} onChange={(e) => setNoteAccessFilter(e.target.value as typeof noteAccessFilter)}><option value="all">All Notes</option><option value="free">Free for All</option><option value="test_series">Test Series</option><option value="selected_users">Selected Users</option></select>
+            <select value={notePublishedFilter} onChange={(e) => setNotePublishedFilter(e.target.value as typeof notePublishedFilter)}><option value="all">All status</option><option value="published">Published</option><option value="unpublished">Unpublished</option></select>
+          </div>
+          {filteredNotes.length === 0 ? <div className="empty"><p>No notes match these filters.</p></div> : <div className="admin-note-list">{filteredNotes.map((n) => {
+            const accessLabel = n.access_type === "free" ? "FREE" : n.access_type === "test_series" ? "TEST SERIES" : "SELECTED USERS";
+            return <div className="admin-note-block" key={n.id}>
+              <div className="admin-note-row">
+                <div className="pdf-icon">PDF</div>
+                <div className="grow"><span>{n.main_folder_id ? folderPath(n.main_folder_id) : n.subject_name || "Notes"}</span><strong>{n.main_class_id.startsWith("folder-") ? "Folder Notes" : n.class_title}</strong><p>{n.note_title}</p>{n.description && <small>{n.description}</small>}<div className="note-badges"><b className={`note-access-badge ${n.access_type}`}>{accessLabel}</b><b className={n.is_active ? "note-status-live" : "note-status-off"}>{n.is_active ? "PUBLISHED" : "UNPUBLISHED"}</b><span>Order {n.display_order || 0}</span>{n.access_type === "selected_users" && <span>{n.granted_count || 0} direct users</span>}</div></div>
+                <div className="admin-note-actions">
+                  <select value={n.access_type} onChange={(e) => void updateNote(n, { access_type: e.target.value as NoteItem["access_type"] })}><option value="free">FREE FOR ALL</option><option value="test_series">TEST SERIES ACCESS</option><option value="selected_users">SELECTED USERS</option></select>
+                  <button className="ghost-small" onClick={() => void updateNote(n, { is_active: !n.is_active })}>{n.is_active ? "Unpublish" : "Publish"}</button>
+                  <button className="ghost-small" onClick={() => openNoteEditor(n)}>{editingNoteId === n.id ? "Close Edit" : "Edit"}</button>
+                  {n.access_type === "selected_users" && <button className="primary-small" onClick={() => void openSelectedUsers(n.id)}>{selectedAccessNote === n.id ? "Close Users" : "Manage Users"}</button>}
+                  <button className="danger-small" onClick={() => void deleteNote(n)}>Delete</button>
+                </div>
+              </div>
+              {editingNoteId === n.id && <div className="note-user-access-box note-edit-box"><div className="section-head"><div><strong>Edit Note Details</strong><p>PDF and storage path stay unchanged.</p></div></div><div className="note-edit-grid"><label>Title<input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} /></label><label>Order<input type="number" value={editOrder} onChange={(e) => setEditOrder(Number(e.target.value) || 0)} /></label><label className="wide">Description<input value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Optional description" /></label></div><button className="primary-small" onClick={() => void saveNoteEditor(n)}>Save Details</button></div>}
+              {selectedAccessNote === n.id && <div className="note-user-access-box"><div className="section-head"><div><strong>Selected Users Access</strong><p>Search by registered email, Login ID, name or mobile.</p></div><span className="count-chip">{noteGrantedIds.size}</span></div>{allowedNoteStudents.length > 0 && <div className="allowed-students-box"><strong>Currently allowed</strong><div>{allowedNoteStudents.map((student) => <span key={student.id}>{student.optional_email || student.login_id}<button title={`Remove ${student.full_name}`} onClick={() => void setNoteStudentAccess(n.id, student.id, false)}>×</button></span>)}</div></div>}<input value={noteStudentQuery} onChange={(e) => setNoteStudentQuery(e.target.value)} placeholder="Student email / registered user" /><div className="student-list">{filteredNoteStudents.map((student) => { const granted = noteGrantedIds.has(student.id); return <div className="student-row" key={student.id}><div><strong>{student.full_name}</strong><span>{student.optional_email || student.login_id} • {student.login_id}</span></div><button className={granted ? "danger-small" : "primary-small"} onClick={() => void setNoteStudentAccess(n.id, student.id, !granted)}>{granted ? "Remove" : "+ Add"}</button></div>; })}</div></div>}
+            </div>;
+          })}</div>}
         </section>
       </main>
     </div>

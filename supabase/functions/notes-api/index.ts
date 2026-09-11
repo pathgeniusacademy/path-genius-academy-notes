@@ -34,10 +34,7 @@ const notesAdmin = createClient(NOTES_URL, getNotesSecretKey(), {
 const MAIN_URL = Deno.env.get("MAIN_SUPABASE_URL") || "";
 const MAIN_KEY = Deno.env.get("MAIN_SUPABASE_PUBLISHABLE_KEY") || "";
 
-function bearer(req: Request) {
-  const value = req.headers.get("Authorization") || "";
-  return value.startsWith("Bearer ") ? value.slice(7).trim() : "";
-}
+type AccessType = "free" | "test_series" | "selected_users";
 
 type MainProfile = {
   id: string;
@@ -45,10 +42,33 @@ type MainProfile = {
   full_name: string;
   login_id: string;
   mobile: string | null;
+  optional_email?: string | null;
   is_active: boolean;
+  test_access_enabled?: boolean;
+  access_expiry?: string | null;
 };
 
-async function requireMainUser(req: Request): Promise<{ profile: MainProfile; token: string }> {
+type NoteRow = {
+  id: string;
+  main_class_id: string;
+  main_folder_id: string | null;
+  subject_name: string | null;
+  class_title: string;
+  note_title: string;
+  storage_path?: string;
+  is_active: boolean;
+  access_type?: string | null;
+  description?: string | null;
+  display_order?: number | null;
+  created_at?: string;
+};
+
+function bearer(req: Request) {
+  const value = req.headers.get("Authorization") || "";
+  return value.startsWith("Bearer ") ? value.slice(7).trim() : "";
+}
+
+async function requireMainUser(req: Request): Promise<{ profile: MainProfile; token: string; main: any }> {
   const token = bearer(req);
   if (!token) throw new Error("UNAUTHORIZED: Please login again.");
   if (!MAIN_URL || !MAIN_KEY) throw new Error("SERVER_CONFIG: Main Supabase settings are missing.");
@@ -63,18 +83,109 @@ async function requireMainUser(req: Request): Promise<{ profile: MainProfile; to
 
   const { data, error } = await main
     .from("profiles")
-    .select("id,role,full_name,login_id,mobile,is_active")
+    .select("id,role,full_name,login_id,mobile,optional_email,is_active,test_access_enabled,access_expiry")
     .eq("id", userData.user.id)
     .single();
 
   if (error || !data) throw new Error("UNAUTHORIZED: Student profile not found.");
   const profile = data as MainProfile;
   if (!profile.is_active) throw new Error("UNAUTHORIZED: This account is not active.");
-  return { profile, token };
+  return { profile, token, main };
 }
 
 function requireAdmin(profile: MainProfile) {
   if (profile.role !== "admin") throw new Error("FORBIDDEN: Admin access required.");
+}
+
+function normalizeAccessType(value: unknown): AccessType {
+  return value === "free" || value === "test_series" || value === "selected_users"
+    ? value
+    : "selected_users";
+}
+
+function hasCurrentTestSeriesAccess(profile: MainProfile) {
+  if (profile.role !== "student" || profile.test_access_enabled !== true) return false;
+  if (!profile.access_expiry) return true;
+  const expiry = new Date(`${profile.access_expiry}T23:59:59`);
+  return Number.isNaN(expiry.getTime()) || expiry.getTime() >= Date.now();
+}
+
+async function getFolderAncestors(main: any, folderId: string | null) {
+  if (!folderId) return [] as string[];
+  const { data } = await main.from("class_folders").select("id,parent_id");
+  const rows = (data || []) as Array<{ id: string; parent_id: string | null }>;
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const result: string[] = [];
+  const seen = new Set<string>();
+  let current = folderId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    result.push(current);
+    current = byId.get(current)?.parent_id || "";
+  }
+  return result;
+}
+
+async function hasSelectedAccess(profile: MainProfile, note: NoteRow, main: any) {
+  const { data: direct } = await notesAdmin
+    .from("student_note_access")
+    .select("id")
+    .eq("student_id", profile.id)
+    .eq("note_id", note.id)
+    .eq("is_granted", true)
+    .maybeSingle();
+  if (direct) return true;
+
+  const folderIds = await getFolderAncestors(main, note.main_folder_id);
+  if (!folderIds.length) return false;
+
+  const { data: folderGrant } = await notesAdmin
+    .from("note_folder_access")
+    .select("id")
+    .eq("student_id", profile.id)
+    .eq("is_granted", true)
+    .in("folder_id", folderIds)
+    .limit(1)
+    .maybeSingle();
+  if (folderGrant) return true;
+
+  const { data: memberships } = await notesAdmin
+    .from("note_access_list_members")
+    .select("list_id")
+    .eq("student_id", profile.id);
+  const listIds = (memberships || []).map((row: any) => row.list_id);
+  if (!listIds.length) return false;
+
+  const { data: listGrant } = await notesAdmin
+    .from("note_folder_list_access")
+    .select("id")
+    .eq("is_granted", true)
+    .in("folder_id", folderIds)
+    .in("list_id", listIds)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(listGrant);
+}
+
+async function canAccessNote(profile: MainProfile, note: NoteRow, main: any) {
+  if (profile.role === "admin") return true;
+  if (!note.is_active) return false;
+  const accessType = normalizeAccessType(note.access_type);
+  if (accessType === "free") return true;
+  if (accessType === "test_series") return hasCurrentTestSeriesAccess(profile);
+  return await hasSelectedAccess(profile, note, main);
+}
+
+async function decorateNotes(profile: MainProfile, notes: NoteRow[], main: any) {
+  const output = [];
+  for (const note of notes) {
+    output.push({
+      ...note,
+      access_type: normalizeAccessType(note.access_type),
+      unlocked: await canAccessNote(profile, note, main),
+    });
+  }
+  return output;
 }
 
 function cleanFileName(name: string) {
@@ -104,7 +215,6 @@ async function watermarkPdf(input: Uint8Array, profile: { student_name: string; 
     const diagonalSize = Math.max(12, Math.min(22, width / 28));
     const line = `${brand} | ${identity}`;
     const yPoints = [0.20, 0.43, 0.66, 0.86];
-
     for (let i = 0; i < yPoints.length; i++) {
       page.drawText(line, {
         x: i % 2 === 0 ? width * 0.04 : width * 0.16,
@@ -116,18 +226,10 @@ async function watermarkPdf(input: Uint8Array, profile: { student_name: string; 
         rotate: degrees(-28),
       });
     }
-
     const footer = `${brand}  |  ${identity}`;
     let footerSize = Math.max(7, Math.min(10, width / 60));
     while (regular.widthOfTextAtSize(footer, footerSize) > width - 36 && footerSize > 6) footerSize -= 0.5;
-    page.drawText(footer, {
-      x: 18,
-      y: 12,
-      size: footerSize,
-      font: regular,
-      color: rgb(0.12, 0.16, 0.24),
-      opacity: 0.34,
-    });
+    page.drawText(footer, { x: 18, y: 12, size: footerSize, font: regular, color: rgb(0.12, 0.16, 0.24), opacity: 0.34 });
   }
   return await pdf.save();
 }
@@ -135,21 +237,12 @@ async function watermarkPdf(input: Uint8Array, profile: { student_name: string; 
 async function handleDownload(req: Request, ticketId: string) {
   if (!/^[0-9a-f-]{36}$/i.test(ticketId)) return json({ error: "Invalid download ticket." }, 400);
   const now = new Date().toISOString();
-
-  // Do not consume the ticket before the browser finishes the download.
-  // Chromium download managers can retry or make range/HEAD requests. If the
-  // ticket becomes invalid after the first request, the browser can leave a
-  // perfectly valid PDF stuck as ".crdownload".
-  //
-  // The ticket remains usable only until its short expiry (2 minutes), and the
-  // PDF itself is personalized with the student's identity.
   const { data: ticket, error: ticketError } = await notesAdmin
     .from("note_download_tickets")
     .select("id,student_id,note_id,student_name,student_mobile,login_id,used_at,expires_at")
     .eq("id", ticketId)
     .gt("expires_at", now)
     .maybeSingle();
-
   if (ticketError || !ticket) return json({ error: "This download link is expired." }, 410);
 
   const { data: note, error: noteError } = await notesAdmin
@@ -158,7 +251,6 @@ async function handleDownload(req: Request, ticketId: string) {
     .eq("id", ticket.note_id)
     .eq("is_active", true)
     .maybeSingle();
-
   if (noteError || !note) return json({ error: "Notes file is no longer available." }, 404);
 
   const { data: fileBlob, error: fileError } = await notesAdmin.storage.from("class-notes").download(note.storage_path);
@@ -167,33 +259,13 @@ async function handleDownload(req: Request, ticketId: string) {
   try {
     const original = new Uint8Array(await fileBlob.arrayBuffer());
     const watermarked = await watermarkPdf(original, ticket);
-
-    await notesAdmin.from("note_download_logs").insert({
-      student_id: ticket.student_id,
-      note_id: ticket.note_id,
-      student_name: ticket.student_name,
-      student_mobile: ticket.student_mobile,
-      downloaded_at: now,
-    });
-
+    await notesAdmin.from("note_download_logs").insert({ student_id: ticket.student_id, note_id: ticket.note_id, student_name: ticket.student_name, student_mobile: ticket.student_mobile, downloaded_at: now });
     const filename = cleanFileName(`${note.class_title}-${note.note_title}.pdf`);
     const totalLength = watermarked.byteLength;
-
-    // Mark the ticket as used for audit purposes, but do NOT invalidate it
-    // during its short expiry window. This allows browser retry/range requests.
-    if (!ticket.used_at) {
-      await notesAdmin
-        .from("note_download_tickets")
-        .update({ used_at: now })
-        .eq("id", ticket.id)
-        .is("used_at", null);
-    }
+    if (!ticket.used_at) await notesAdmin.from("note_download_tickets").update({ used_at: now }).eq("id", ticket.id).is("used_at", null);
 
     const baseHeaders: Record<string, string> = {
       ...corsHeaders,
-      // application/octet-stream is intentionally used for the download
-      // response. It is more reliable for binary Edge Function downloads and
-      // still saves with the .pdf filename from Content-Disposition.
       "Content-Type": "application/octet-stream",
       "Content-Disposition": `attachment; filename="${filename}"`,
       "Cache-Control": "private, no-store, max-age=0, must-revalidate",
@@ -202,8 +274,7 @@ async function handleDownload(req: Request, ticketId: string) {
       "X-Content-Type-Options": "nosniff",
       "Cross-Origin-Resource-Policy": "cross-origin",
       "Accept-Ranges": "bytes",
-      "Access-Control-Expose-Headers":
-        "Content-Disposition, Content-Length, Content-Range, Accept-Ranges",
+      "Access-Control-Expose-Headers": "Content-Disposition, Content-Length, Content-Range, Accept-Ranges",
     };
 
     const range = req.headers.get("range");
@@ -212,85 +283,60 @@ async function handleDownload(req: Request, ticketId: string) {
       if (match) {
         let start = match[1] ? Number(match[1]) : 0;
         let end = match[2] ? Number(match[2]) : totalLength - 1;
-
         if (!Number.isFinite(start) || start < 0) start = 0;
         if (!Number.isFinite(end) || end >= totalLength) end = totalLength - 1;
-
         if (start <= end && start < totalLength) {
           const chunk = watermarked.slice(start, end + 1);
-          return new Response(req.method === "HEAD" ? null : chunk, {
-            status: 206,
-            headers: {
-              ...baseHeaders,
-              "Content-Range": `bytes ${start}-${end}/${totalLength}`,
-              "Content-Length": String(chunk.byteLength),
-            },
-          });
+          return new Response(req.method === "HEAD" ? null : chunk, { status: 206, headers: { ...baseHeaders, "Content-Range": `bytes ${start}-${end}/${totalLength}`, "Content-Length": String(chunk.byteLength) } });
         }
       }
-
-      return new Response(null, {
-        status: 416,
-        headers: {
-          ...baseHeaders,
-          "Content-Range": `bytes */${totalLength}`,
-        },
-      });
+      return new Response(null, { status: 416, headers: { ...baseHeaders, "Content-Range": `bytes */${totalLength}` } });
     }
 
-    return new Response(req.method === "HEAD" ? null : watermarked, {
-      status: 200,
-      headers: {
-        ...baseHeaders,
-        "Content-Length": String(totalLength),
-      },
-    });
+    return new Response(req.method === "HEAD" ? null : watermarked, { status: 200, headers: { ...baseHeaders, "Content-Length": String(totalLength) } });
   } catch (error) {
     console.error("PDF watermark error", error);
     return json({ error: "Could not personalize this PDF. Please contact support." }, 500);
   }
 }
 
+const noteSelect = "id,main_class_id,main_folder_id,subject_name,class_title,note_title,is_active,access_type,description,display_order,created_at";
+
 async function handleAction(req: Request) {
-  const { profile } = await requireMainUser(req);
+  const { profile, main } = await requireMainUser(req);
   const body = await req.json().catch(() => ({}));
   const action = String(body?.action || "");
 
   if (action === "myNotes") {
     if (profile.role !== "student") return json({ notes: [] });
-    const { data: access, error } = await notesAdmin.from("student_note_access").select("note_id").eq("student_id", profile.id).eq("is_granted", true);
+    const { data: notes, error } = await notesAdmin.from("notes").select(noteSelect).eq("is_active", true).order("display_order").order("created_at", { ascending: false });
     if (error) throw error;
-    const ids = (access || []).map((x: any) => x.note_id);
-    if (!ids.length) return json({ notes: [] });
-    const { data: notes, error: notesError } = await notesAdmin.from("notes").select("id,main_class_id,main_folder_id,subject_name,class_title,note_title,is_active,created_at").in("id", ids).eq("is_active", true).order("created_at", { ascending: false });
-    if (notesError) throw notesError;
-    return json({ notes: (notes || []).map((n: any) => ({ ...n, unlocked: true })) });
+    return json({ notes: await decorateNotes(profile, (notes || []) as NoteRow[], main) });
   }
 
   if (action === "listClassNotes") {
     const classId = String(body?.classId || "");
     if (!classId) return json({ error: "Class ID is required." }, 400);
-    const { data: notes, error } = await notesAdmin.from("notes").select("id,main_class_id,main_folder_id,subject_name,class_title,note_title,is_active,created_at").eq("main_class_id", classId).eq("is_active", true).order("created_at", { ascending: false });
+    const { data: notes, error } = await notesAdmin.from("notes").select(noteSelect).eq("main_class_id", classId).eq("is_active", true).order("display_order").order("created_at", { ascending: false });
     if (error) throw error;
-    let unlocked = new Set<string>();
-    if (profile.role === "student" && (notes || []).length) {
-      const ids = (notes || []).map((n: any) => n.id);
-      const { data: access } = await notesAdmin.from("student_note_access").select("note_id").eq("student_id", profile.id).eq("is_granted", true).in("note_id", ids);
-      unlocked = new Set((access || []).map((x: any) => x.note_id));
-    }
-    return json({ notes: (notes || []).map((n: any) => ({ ...n, unlocked: profile.role === "admin" || unlocked.has(n.id) })) });
+    return json({ notes: await decorateNotes(profile, (notes || []) as NoteRow[], main) });
+  }
+
+  if (action === "listFolderNotes") {
+    const folderId = String(body?.folderId || "");
+    if (!folderId) return json({ error: "Folder ID is required." }, 400);
+    const { data: notes, error } = await notesAdmin.from("notes").select(noteSelect).eq("main_folder_id", folderId).eq("is_active", true).order("display_order").order("created_at", { ascending: false });
+    if (error) throw error;
+    return json({ notes: await decorateNotes(profile, (notes || []) as NoteRow[], main) });
   }
 
   if (action === "createDownloadTicket") {
     if (profile.role !== "student") return json({ error: "Student access required." }, 403);
     const noteId = String(body?.noteId || "");
     if (!noteId) return json({ error: "Note ID is required." }, 400);
-
-    const { data: access } = await notesAdmin.from("student_note_access").select("id").eq("student_id", profile.id).eq("note_id", noteId).eq("is_granted", true).maybeSingle();
-    if (!access) return json({ error: "Notes access is not enabled for this account." }, 403);
-
-    const { data: note } = await notesAdmin.from("notes").select("id,note_title,class_title,is_active").eq("id", noteId).eq("is_active", true).maybeSingle();
+    const { data: note } = await notesAdmin.from("notes").select(`${noteSelect},storage_path`).eq("id", noteId).eq("is_active", true).maybeSingle();
     if (!note) return json({ error: "Notes are not available." }, 404);
+    if (!(await canAccessNote(profile, note as NoteRow, main))) return json({ error: "You do not have access to this note." }, 403);
 
     const { data: ticket, error } = await notesAdmin.from("note_download_tickets").insert({
       student_id: profile.id,
@@ -301,32 +347,19 @@ async function handleAction(req: Request) {
       expires_at: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
     }).select("id").single();
     if (error) throw error;
-
-    // Always build the public HTTPS endpoint from SUPABASE_URL.
-    // Using req.url/origin can resolve to an internal/proxied HTTP origin in some
-    // hosted Edge Function environments, which Chromium then blocks as an
-    // insecure download from an HTTPS website.
-    const publicNotesOrigin = NOTES_URL.replace(/\/$/, "");
-    const downloadUrl = `${publicNotesOrigin}/functions/v1/notes-api?ticket=${encodeURIComponent(ticket.id)}`;
+    const downloadUrl = `${NOTES_URL.replace(/\/$/, "")}/functions/v1/notes-api?ticket=${encodeURIComponent(ticket.id)}`;
     return json({ downloadUrl, fileName: cleanFileName(`${note.class_title}-${note.note_title}.pdf`) });
   }
 
   requireAdmin(profile);
 
   if (action === "adminListNotes") {
-    const { data: notes, error } = await notesAdmin.from("notes").select("id,main_class_id,main_folder_id,subject_name,class_title,note_title,is_active,created_at").order("created_at", { ascending: false });
+    const { data: notes, error } = await notesAdmin.from("notes").select(noteSelect).order("display_order").order("created_at", { ascending: false });
     if (error) throw error;
     const { data: access } = await notesAdmin.from("student_note_access").select("note_id").eq("is_granted", true);
     const counts = new Map<string, number>();
     for (const row of access || []) counts.set((row as any).note_id, (counts.get((row as any).note_id) || 0) + 1);
-    return json({ notes: (notes || []).map((n: any) => ({ ...n, granted_count: counts.get(n.id) || 0 })) });
-  }
-
-  if (action === "adminListAccess") {
-    const noteId = String(body?.noteId || "");
-    const { data, error } = await notesAdmin.from("student_note_access").select("student_id").eq("note_id", noteId).eq("is_granted", true);
-    if (error) throw error;
-    return json({ studentIds: (data || []).map((x: any) => x.student_id) });
+    return json({ notes: (notes || []).map((n: any) => ({ ...n, access_type: normalizeAccessType(n.access_type), granted_count: counts.get(n.id) || 0 })) });
   }
 
   if (action === "adminCreateUpload") {
@@ -346,18 +379,35 @@ async function handleAction(req: Request) {
     const classTitle = String(body?.classTitle || "");
     const noteTitle = String(body?.noteTitle || "Class Notes");
     const storagePath = String(body?.storagePath || "");
+    const accessType = normalizeAccessType(body?.accessType);
+    const description = body?.description ? String(body.description) : null;
+    const displayOrder = Number.isFinite(Number(body?.displayOrder)) ? Number(body.displayOrder) : 0;
+    const isActive = body?.isActive !== false;
     if (!classId || !classTitle || !storagePath || !storagePath.startsWith(`${classId}/`)) return json({ error: "Invalid notes metadata." }, 400);
-    const { data, error } = await notesAdmin.from("notes").insert({
-      main_class_id: classId,
-      main_folder_id: folderId,
-      subject_name: subjectName,
-      class_title: classTitle,
-      note_title: noteTitle,
-      storage_path: storagePath,
-      is_active: true,
-    }).select("id").single();
+    const { data, error } = await notesAdmin.from("notes").insert({ main_class_id: classId, main_folder_id: folderId, subject_name: subjectName, class_title: classTitle, note_title: noteTitle, storage_path: storagePath, is_active: isActive, access_type: accessType, description, display_order: displayOrder }).select("id").single();
     if (error) throw error;
     return json({ ok: true, id: data.id });
+  }
+
+  if (action === "adminUpdateNote") {
+    const noteId = String(body?.noteId || "");
+    if (!noteId) return json({ error: "Note ID is required." }, 400);
+    const patch: Record<string, unknown> = {};
+    if (body?.noteTitle !== undefined) patch.note_title = String(body.noteTitle || "Class Notes").trim() || "Class Notes";
+    if (body?.description !== undefined) patch.description = body.description ? String(body.description) : null;
+    if (body?.displayOrder !== undefined) patch.display_order = Number.isFinite(Number(body.displayOrder)) ? Number(body.displayOrder) : 0;
+    if (body?.isActive !== undefined) patch.is_active = Boolean(body.isActive);
+    if (body?.accessType !== undefined) patch.access_type = normalizeAccessType(body.accessType);
+    const { error } = await notesAdmin.from("notes").update(patch).eq("id", noteId);
+    if (error) throw error;
+    return json({ ok: true });
+  }
+
+  if (action === "adminListAccess") {
+    const noteId = String(body?.noteId || "");
+    const { data, error } = await notesAdmin.from("student_note_access").select("student_id").eq("note_id", noteId).eq("is_granted", true);
+    if (error) throw error;
+    return json({ studentIds: (data || []).map((x: any) => x.student_id) });
   }
 
   if (action === "adminSetAccess") {
@@ -365,14 +415,87 @@ async function handleAction(req: Request) {
     const studentId = String(body?.studentId || "");
     const grant = Boolean(body?.grant);
     if (!noteId || !studentId) return json({ error: "Note and student are required." }, 400);
-    const payload = {
-      student_id: studentId,
-      note_id: noteId,
-      is_granted: grant,
-      granted_at: grant ? new Date().toISOString() : new Date().toISOString(),
-      revoked_at: grant ? null : new Date().toISOString(),
-    };
+    const payload = { student_id: studentId, note_id: noteId, is_granted: grant, granted_at: new Date().toISOString(), revoked_at: grant ? null : new Date().toISOString() };
     const { error } = await notesAdmin.from("student_note_access").upsert(payload, { onConflict: "student_id,note_id" });
+    if (error) throw error;
+    return json({ ok: true });
+  }
+
+  if (action === "adminListFolderAccess") {
+    const folderId = String(body?.folderId || "");
+    const { data, error } = await notesAdmin.from("note_folder_access").select("student_id").eq("folder_id", folderId).eq("is_granted", true);
+    if (error) throw error;
+    return json({ studentIds: (data || []).map((x: any) => x.student_id) });
+  }
+
+  if (action === "adminSetFolderAccess") {
+    const folderId = String(body?.folderId || "");
+    const studentId = String(body?.studentId || "");
+    const grant = Boolean(body?.grant);
+    if (!folderId || !studentId) return json({ error: "Folder and student are required." }, 400);
+    const { error } = await notesAdmin.from("note_folder_access").upsert({ student_id: studentId, folder_id: folderId, is_granted: grant, granted_at: new Date().toISOString(), revoked_at: grant ? null : new Date().toISOString() }, { onConflict: "student_id,folder_id" });
+    if (error) throw error;
+    return json({ ok: true });
+  }
+
+  if (action === "adminListAccessLists") {
+    const { data: lists, error } = await notesAdmin.from("note_access_lists").select("id,name,description,is_active,created_at").eq("is_active", true).order("created_at", { ascending: false });
+    if (error) throw error;
+    const { data: members } = await notesAdmin.from("note_access_list_members").select("list_id");
+    const { data: folders } = await notesAdmin.from("note_folder_list_access").select("list_id").eq("is_granted", true);
+    const memberCounts = new Map<string, number>(); const folderCounts = new Map<string, number>();
+    for (const row of members || []) memberCounts.set((row as any).list_id, (memberCounts.get((row as any).list_id) || 0) + 1);
+    for (const row of folders || []) folderCounts.set((row as any).list_id, (folderCounts.get((row as any).list_id) || 0) + 1);
+    return json({ lists: (lists || []).map((row: any) => ({ ...row, member_count: memberCounts.get(row.id) || 0, folder_count: folderCounts.get(row.id) || 0 })) });
+  }
+
+  if (action === "adminCreateAccessList") {
+    const name = String(body?.name || "").trim();
+    if (!name) return json({ error: "List name is required." }, 400);
+    const { data, error } = await notesAdmin.from("note_access_lists").insert({ name, description: String(body?.description || "").trim() || null }).select("id,name,description,is_active").single();
+    if (error) throw error;
+    return json({ list: { ...data, member_count: 0, folder_count: 0 } });
+  }
+
+  if (action === "adminDeleteAccessList") {
+    const listId = String(body?.listId || "");
+    const { error } = await notesAdmin.from("note_access_lists").delete().eq("id", listId);
+    if (error) throw error;
+    return json({ ok: true });
+  }
+
+  if (action === "adminListAccessListMembers") {
+    const listId = String(body?.listId || "");
+    const { data, error } = await notesAdmin.from("note_access_list_members").select("student_id").eq("list_id", listId);
+    if (error) throw error;
+    return json({ studentIds: (data || []).map((x: any) => x.student_id) });
+  }
+
+  if (action === "adminAddAccessListMember" || action === "adminRemoveAccessListMember") {
+    const listId = String(body?.listId || "");
+    const studentId = String(body?.studentId || "");
+    if (!listId || !studentId) return json({ error: "List and student are required." }, 400);
+    const query = action === "adminAddAccessListMember"
+      ? notesAdmin.from("note_access_list_members").upsert({ list_id: listId, student_id: studentId }, { onConflict: "list_id,student_id" })
+      : notesAdmin.from("note_access_list_members").delete().eq("list_id", listId).eq("student_id", studentId);
+    const { error } = await query;
+    if (error) throw error;
+    return json({ ok: true });
+  }
+
+  if (action === "adminListFolderListAccess") {
+    const folderId = String(body?.folderId || "");
+    const { data, error } = await notesAdmin.from("note_folder_list_access").select("list_id").eq("folder_id", folderId).eq("is_granted", true);
+    if (error) throw error;
+    return json({ listIds: (data || []).map((x: any) => x.list_id) });
+  }
+
+  if (action === "adminSetListFolderAccess") {
+    const folderId = String(body?.folderId || "");
+    const listId = String(body?.listId || "");
+    const grant = Boolean(body?.grant);
+    if (!folderId || !listId) return json({ error: "Folder and list are required." }, 400);
+    const { error } = await notesAdmin.from("note_folder_list_access").upsert({ folder_id: folderId, list_id: listId, is_granted: grant, granted_at: new Date().toISOString(), revoked_at: grant ? null : new Date().toISOString() }, { onConflict: "folder_id,list_id" });
     if (error) throw error;
     return json({ ok: true });
   }
@@ -396,9 +519,7 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     const ticket = url.searchParams.get("ticket");
-    if ((req.method === "GET" || req.method === "HEAD") && ticket) {
-      return await handleDownload(req, ticket);
-    }
+    if ((req.method === "GET" || req.method === "HEAD") && ticket) return await handleDownload(req, ticket);
     if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
     return await handleAction(req);
   } catch (error) {

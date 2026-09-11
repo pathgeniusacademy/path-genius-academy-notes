@@ -2,12 +2,9 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { MAIN_SITE_URL } from "@/lib/config";
 
-const DESMOS_URL = "https://www.desmos.com/calculator";
-
-function Icon({ name }: { name: "home" | "graph" | "classes" | "dashboard" | "profile" }) {
+function Icon({ name }: { name: "home" | "classes" | "dashboard" | "profile" }) {
   const paths = {
     home: "M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z",
-    graph: "M4 20V5m0 15h16M7 16.5l3.2-4.2 3 2.1L18.5 8",
     classes: "M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8A2.5 2.5 0 0 1 17.5 16h-11A2.5 2.5 0 0 1 4 13.5v-8ZM9.5 7.3v4.4l4-2.2-4-2.2ZM8 20h8",
     dashboard: "M4 4h6v7H4V4Zm10 0h6v4h-6V4ZM4 15h6v5H4v-5Zm10-3h6v8h-6v-8Z",
     profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0",
@@ -30,8 +27,8 @@ export default function AppShell() {
             <div className="brand-copy"><strong>Path Genius Academy</strong><span>Secure Notes Vault</span></div>
           </Link>
           <div className="top-actions">
-            <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer" className="ghost-btn desktop-action">Graph Calculator</a>
             <a href={`${MAIN_SITE_URL}/free-classes`} className="ghost-btn desktop-action">Classes</a>
+            <a href={`${MAIN_SITE_URL}/dashboard`} className="ghost-btn desktop-action">Dashboard</a>
             <div className="profile-chip desktop-action"><span>{(profile?.full_name || profile?.login_id || "S").slice(0,1).toUpperCase()}</span><small>{profile?.login_id}</small></div>
             <button className="ghost-btn" onClick={() => void signOut()}>Logout</button>
           </div>
@@ -50,7 +47,6 @@ export default function AppShell() {
 
         <nav className="mini-nav premium-mini-nav">
           <Link className={loc.pathname === "/" ? "active" : ""} to="/"><Icon name="home" />My Notes</Link>
-          <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer"><Icon name="graph" />Graph Calculator</a>
           <a href={`${MAIN_SITE_URL}/free-classes`}><Icon name="classes" />Classes</a>
           <a href={`${MAIN_SITE_URL}/dashboard`}><Icon name="dashboard" />Main Dashboard</a>
         </nav>
@@ -58,9 +54,8 @@ export default function AppShell() {
         <Outlet />
       </main>
 
-      <nav className="mobile-bottom-nav desmos-enabled-nav" aria-label="Notes navigation">
+      <nav className="mobile-bottom-nav" aria-label="Notes navigation">
         <Link className={loc.pathname === "/" ? "active" : ""} to="/"><Icon name="home" /><span>Notes</span></Link>
-        <a href={DESMOS_URL} target="_blank" rel="noopener noreferrer"><Icon name="graph" /><span>Graph</span></a>
         <a href={`${MAIN_SITE_URL}/free-classes`}><Icon name="classes" /><span>Classes</span></a>
         <a href={`${MAIN_SITE_URL}/dashboard`}><Icon name="dashboard" /><span>Dashboard</span></a>
         <button onClick={() => void signOut()}><Icon name="profile" /><span>Logout</span></button>

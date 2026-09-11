@@ -10,6 +10,9 @@ export type NoteItem = {
   note_title: string;
   is_active: boolean;
   created_at: string;
+  access_type: "free" | "test_series" | "selected_users";
+  description?: string | null;
+  display_order?: number;
   unlocked?: boolean;
   granted_count?: number;
   folder_granted_count?: number;
