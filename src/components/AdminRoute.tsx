@@ -1,3 +1,4 @@
+import SessionProblem from "./SessionProblem";
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 
@@ -6,8 +7,10 @@ function BrandedLoader() {
 }
 
 export default function AdminRoute() {
-  const { loading, session, profile } = useAuth();
+  const { loading, session, profile, authError } = useAuth();
   if (loading) return <BrandedLoader />;
+  if (authError || (session && !profile)) return <SessionProblem />;
   if (!session || profile?.role !== "admin") return <Navigate to="/admin/login" replace />;
+  if (!profile?.is_active) return <SessionProblem />;
   return <Outlet />;
 }

@@ -1,3 +1,4 @@
+import SessionProblem from "./SessionProblem";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 
@@ -6,11 +7,13 @@ function BrandedLoader() {
 }
 
 export default function ProtectedRoute() {
-  const { loading, session, profile } = useAuth();
+  const { loading, session, profile, authError } = useAuth();
   const location = useLocation();
   if (loading) return <BrandedLoader />;
+  if (authError || (session && !profile)) return <SessionProblem />;
   if (!session || !profile || profile.role !== "student") {
     return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   }
+  if (!profile.is_active) return <SessionProblem />;
   return <Outlet />;
 }

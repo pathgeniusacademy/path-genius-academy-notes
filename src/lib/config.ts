@@ -8,4 +8,5 @@ export const NOTES_SUPABASE_URL =
 export const NOTES_SUPABASE_KEY =
   import.meta.env.VITE_NOTES_SUPABASE_PUBLISHABLE_KEY ||
   "sb_publishable__gxnEZdXXJoMa0khMxgNFw_dbZGQl6A";
-export const MAIN_SITE_URL = import.meta.env.VITE_MAIN_SITE_URL || "https://pathgenius.netlify.app";
+export const CANONICAL_MAIN_SITE_URL = import.meta.env.VITE_MAIN_SITE_URL || "https://pathgenius.netlify.app";
+export const MAIN_SITE_URL = /^\/notes(?:\/|$)/.test(window.location.pathname) ? window.location.origin : CANONICAL_MAIN_SITE_URL;

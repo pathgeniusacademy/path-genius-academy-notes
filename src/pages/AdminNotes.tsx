@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/context/AuthContext";
 import { mainSupabase } from "@/lib/mainSupabase";
@@ -54,6 +54,10 @@ export default function AdminNotes() {
   const [savingList, setSavingList] = useState(false);
 
   // Per-note access/editor. Existing student_note_access is reused.
+  const noteAccessRequest = useRef(0);
+  const [noteAccessReady, setNoteAccessReady] = useState(false);
+  const [savingNoteId, setSavingNoteId] = useState("");
+  const [savingAccess, setSavingAccess] = useState(false);
   const [selectedAccessNote, setSelectedAccessNote] = useState<string>("");
   const [noteGrantedIds, setNoteGrantedIds] = useState<Set<string>>(new Set());
   const [noteStudentQuery, setNoteStudentQuery] = useState("");
@@ -332,18 +336,20 @@ export default function AdminNotes() {
   }
 
   async function updateNote(note: NoteItem, patch: Partial<Pick<NoteItem, "note_title" | "description" | "display_order" | "is_active" | "access_type">>) {
+    if (savingNoteId) return false;
+    setSavingNoteId(note.id);
     try {
-      await callNotesApi("adminUpdateNote", {
-        noteId: note.id,
-        noteTitle: patch.note_title ?? note.note_title,
-        description: patch.description ?? note.description ?? "",
-        displayOrder: patch.display_order ?? note.display_order ?? 0,
-        isActive: patch.is_active ?? note.is_active,
-        accessType: patch.access_type ?? note.access_type,
-      });
-      setNotes((current) => current.map((item) => item.id === note.id ? { ...item, ...patch } : item));
-      toast.success("Note settings updated");
-    } catch (e) { toast.error((e as Error).message); }
+      const payload: Record<string,unknown> = {noteId:note.id};
+      if(patch.note_title !== undefined) payload.noteTitle=patch.note_title;
+      if(patch.description !== undefined) payload.description=patch.description;
+      if(patch.display_order !== undefined) payload.displayOrder=patch.display_order;
+      if(patch.is_active !== undefined) payload.isActive=patch.is_active;
+      if(patch.access_type !== undefined) payload.accessType=patch.access_type;
+      await callNotesApi("adminUpdateNote",payload);
+      setNotes(current=>current.map(item=>item.id===note.id?{...item,...patch}:item));
+      toast.success("Note settings updated");return true;
+    } catch(e) {toast.error((e as Error).message);return false;}
+    finally {setSavingNoteId("");}
   }
 
   function openNoteEditor(note: NoteItem) {
@@ -356,11 +362,13 @@ export default function AdminNotes() {
 
   async function saveNoteEditor(note: NoteItem) {
     const nextTitle = editTitle.trim() || "Class Notes";
-    await updateNote(note, { note_title: nextTitle, description: editDescription.trim(), display_order: editOrder });
-    setEditingNoteId("");
+    if (await updateNote(note, { note_title: nextTitle, description: editDescription.trim(), display_order: editOrder })) setEditingNoteId("");
   }
 
   async function openSelectedUsers(noteId: string) {
+    const request=++noteAccessRequest.current;
+    setNoteAccessReady(false);
+    setNoteGrantedIds(new Set());
     if (selectedAccessNote === noteId) {
       setSelectedAccessNote("");
       setNoteGrantedIds(new Set());
@@ -370,13 +378,19 @@ export default function AdminNotes() {
     setNoteStudentQuery("");
     try {
       const result = await callNotesApi<{ studentIds: string[] }>("adminListAccess", { noteId });
+      if(request !== noteAccessRequest.current) return;
       setNoteGrantedIds(new Set(result.studentIds));
+      setNoteAccessReady(true);
     } catch (e) { toast.error((e as Error).message); }
   }
 
   async function setNoteStudentAccess(noteId: string, studentId: string, grant: boolean) {
+    if(savingAccess || !noteAccessReady) return;
+    const request=noteAccessRequest.current;
+    setSavingAccess(true);
     try {
       await callNotesApi("adminSetAccess", { noteId, studentId, grant });
+      if(request !== noteAccessRequest.current) return;
       setNoteGrantedIds((prev) => {
         const next = new Set(prev);
         if (grant) next.add(studentId); else next.delete(studentId);
@@ -385,6 +399,7 @@ export default function AdminNotes() {
       setNotes((current) => current.map((note) => note.id === noteId ? { ...note, granted_count: Math.max(0, (note.granted_count || 0) + (grant ? 1 : -1)) } : note));
       toast.success(grant ? "Student added to this note" : "Student removed from this note");
     } catch (e) { toast.error((e as Error).message); }
+    finally {setSavingAccess(false);}
   }
 
   async function deleteNote(note: NoteItem) {
@@ -525,15 +540,15 @@ export default function AdminNotes() {
                 <div className="pdf-icon">PDF</div>
                 <div className="grow"><span>{n.main_folder_id ? folderPath(n.main_folder_id) : n.subject_name || "Notes"}</span><strong>{n.main_class_id.startsWith("folder-") ? "Folder Notes" : n.class_title}</strong><p>{n.note_title}</p>{n.description && <small>{n.description}</small>}<div className="note-badges"><b className={`note-access-badge ${n.access_type}`}>{accessLabel}</b><b className={n.is_active ? "note-status-live" : "note-status-off"}>{n.is_active ? "PUBLISHED" : "UNPUBLISHED"}</b><span>Order {n.display_order || 0}</span>{n.access_type === "selected_users" && <span>{n.granted_count || 0} direct users</span>}</div></div>
                 <div className="admin-note-actions">
-                  <select value={n.access_type} onChange={(e) => void updateNote(n, { access_type: e.target.value as NoteItem["access_type"] })}><option value="free">FREE FOR ALL</option><option value="test_series">TEST SERIES ACCESS</option><option value="selected_users">SELECTED USERS</option></select>
-                  <button className="ghost-small" onClick={() => void updateNote(n, { is_active: !n.is_active })}>{n.is_active ? "Unpublish" : "Publish"}</button>
+                  <select disabled={!!savingNoteId} value={n.access_type} onChange={(e) => void updateNote(n, { access_type: e.target.value as NoteItem["access_type"] })}><option value="free">FREE FOR ALL</option><option value="test_series">TEST SERIES ACCESS</option><option value="selected_users">SELECTED USERS</option></select>
+                  <button className="ghost-small" disabled={!!savingNoteId} onClick={() => void updateNote(n, { is_active: !n.is_active })}>{n.is_active ? "Unpublish" : "Publish"}</button>
                   <button className="ghost-small" onClick={() => openNoteEditor(n)}>{editingNoteId === n.id ? "Close Edit" : "Edit"}</button>
                   {n.access_type === "selected_users" && <button className="primary-small" onClick={() => void openSelectedUsers(n.id)}>{selectedAccessNote === n.id ? "Close Users" : "Manage Users"}</button>}
                   <button className="danger-small" onClick={() => void deleteNote(n)}>Delete</button>
                 </div>
               </div>
-              {editingNoteId === n.id && <div className="note-user-access-box note-edit-box"><div className="section-head"><div><strong>Edit Note Details</strong><p>PDF and storage path stay unchanged.</p></div></div><div className="note-edit-grid"><label>Title<input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} /></label><label>Order<input type="number" value={editOrder} onChange={(e) => setEditOrder(Number(e.target.value) || 0)} /></label><label className="wide">Description<input value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Optional description" /></label></div><button className="primary-small" onClick={() => void saveNoteEditor(n)}>Save Details</button></div>}
-              {selectedAccessNote === n.id && <div className="note-user-access-box"><div className="section-head"><div><strong>Selected Users Access</strong><p>Search by registered email, Login ID, name or mobile.</p></div><span className="count-chip">{noteGrantedIds.size}</span></div>{allowedNoteStudents.length > 0 && <div className="allowed-students-box"><strong>Currently allowed</strong><div>{allowedNoteStudents.map((student) => <span key={student.id}>{student.optional_email || student.login_id}<button title={`Remove ${student.full_name}`} onClick={() => void setNoteStudentAccess(n.id, student.id, false)}>×</button></span>)}</div></div>}<input value={noteStudentQuery} onChange={(e) => setNoteStudentQuery(e.target.value)} placeholder="Student email / registered user" /><div className="student-list">{filteredNoteStudents.map((student) => { const granted = noteGrantedIds.has(student.id); return <div className="student-row" key={student.id}><div><strong>{student.full_name}</strong><span>{student.optional_email || student.login_id} • {student.login_id}</span></div><button className={granted ? "danger-small" : "primary-small"} onClick={() => void setNoteStudentAccess(n.id, student.id, !granted)}>{granted ? "Remove" : "+ Add"}</button></div>; })}</div></div>}
+              {editingNoteId === n.id && <div className="note-user-access-box note-edit-box"><div className="section-head"><div><strong>Edit Note Details</strong><p>PDF and storage path stay unchanged.</p></div></div><div className="note-edit-grid"><label>Title<input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} /></label><label>Order<input type="number" value={editOrder} onChange={(e) => setEditOrder(Number(e.target.value) || 0)} /></label><label className="wide">Description<input value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Optional description" /></label></div><button className="primary-small" disabled={!!savingNoteId} onClick={() => void saveNoteEditor(n)}>Save Details</button></div>}
+              {selectedAccessNote === n.id && <div className="note-user-access-box"><div className="section-head"><div><strong>Selected Users Access</strong><p>Search by registered email, Login ID, name or mobile.</p></div><span className="count-chip">{noteGrantedIds.size}</span></div>{allowedNoteStudents.length > 0 && <div className="allowed-students-box"><strong>Currently allowed</strong><div>{allowedNoteStudents.map((student) => <span key={student.id}>{student.optional_email || student.login_id}<button title={`Remove ${student.full_name}`} disabled={savingAccess || !noteAccessReady} onClick={() => void setNoteStudentAccess(n.id, student.id, false)}>×</button></span>)}</div></div>}{!noteAccessReady && <p>Loading access list…</p>}<input disabled={!noteAccessReady} value={noteStudentQuery} onChange={(e) => setNoteStudentQuery(e.target.value)} placeholder="Student email / registered user" /><div className="student-list">{filteredNoteStudents.map((student) => { const granted = noteGrantedIds.has(student.id); return <div className="student-row" key={student.id}><div><strong>{student.full_name}</strong><span>{student.optional_email || student.login_id} • {student.login_id}</span></div><button className={granted ? "danger-small" : "primary-small"} disabled={savingAccess || !noteAccessReady} onClick={() => void setNoteStudentAccess(n.id, student.id, !granted)}>{granted ? "Remove" : "+ Add"}</button></div>; })}</div></div>}
             </div>;
           })}</div>}
         </section>

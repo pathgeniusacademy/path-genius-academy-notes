@@ -54,11 +54,12 @@ export default function AppShell() {
         <Outlet />
       </main>
 
-      <nav className="mobile-bottom-nav" aria-label="Notes navigation">
-        <Link className={loc.pathname === "/" ? "active" : ""} to="/"><Icon name="home" /><span>Notes</span></Link>
+      <nav className="mobile-bottom-nav" aria-label="Student navigation">
+        <a href={`${MAIN_SITE_URL}/dashboard`}><Icon name="home" /><span>Home</span></a>
         <a href={`${MAIN_SITE_URL}/free-classes`}><Icon name="classes" /><span>Classes</span></a>
-        <a href={`${MAIN_SITE_URL}/dashboard`}><Icon name="dashboard" /><span>Dashboard</span></a>
-        <button onClick={() => void signOut()}><Icon name="profile" /><span>Logout</span></button>
+        <a href={`${MAIN_SITE_URL}/tests`}><Icon name="dashboard" /><span>Tests</span></a>
+        <a href={`${MAIN_SITE_URL}/saved-questions`}><Icon name="profile" /><span>Revision</span></a>
+        <Link className="active" to="/"><Icon name="home" /><span>Notes</span></Link>
       </nav>
     </div>
   );
